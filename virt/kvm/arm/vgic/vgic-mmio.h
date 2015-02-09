@@ -16,15 +16,32 @@
 #ifndef __KVM_ARM_VGIC_MMIO_H__
 #define __KVM_ARM_VGIC_MMIO_H__
 
+enum iodev_type {
+	IODEV_CPUIF,
+	IODEV_DIST,
+	IODEV_REDIST,
+	IODEV_ITS
+};
+
 struct vgic_register_region {
 	unsigned int reg_offset;
 	unsigned int len;
 	unsigned int bits_per_irq;
 	unsigned int access_flags;
-	unsigned long (*read)(struct kvm_vcpu *vcpu, gpa_t addr,
-			      unsigned int len);
-	void (*write)(struct kvm_vcpu *vcpu, gpa_t addr, unsigned int len,
-		      unsigned long val);
+	enum iodev_type iodev_type;
+	union {
+		unsigned long (*read)(struct kvm_vcpu *vcpu, gpa_t addr,
+				      unsigned int len);
+		unsigned long (*its_read)(struct kvm *kvm, struct vgic_its *its,
+					  gpa_t addr, unsigned int len);
+	};
+	union {
+		void (*write)(struct kvm_vcpu *vcpu, gpa_t addr,
+			      unsigned int len, unsigned long val);
+		void (*its_write)(struct kvm *kvm, struct vgic_its *its,
+				  gpa_t addr, unsigned int len,
+				  unsigned long val);
+	};
 };
 
 extern struct kvm_io_device_ops kvm_io_gic_ops;
@@ -57,22 +74,24 @@ extern struct kvm_io_device_ops kvm_io_gic_ops;
  * The _WITH_LENGTH version instantiates registers with a fixed length
  * and is mutually exclusive with the _PER_IRQ version.
  */
-#define REGISTER_DESC_WITH_BITS_PER_IRQ(off, rd, wr, bpi, acc)		\
+#define REGISTER_DESC_WITH_BITS_PER_IRQ(off, type, rd, wr, bpi, acc)	\
 	{								\
 		.reg_offset = off,					\
 		.bits_per_irq = bpi,					\
 		.len = bpi * 1024 / 8,					\
 		.access_flags = acc,					\
+		.iodev_type = type,					\
 		.read = rd,						\
 		.write = wr,						\
 	}
 
-#define REGISTER_DESC_WITH_LENGTH(off, rd, wr, length, acc)		\
+#define REGISTER_DESC_WITH_LENGTH(off, type, rd, wr, length, acc)	\
 	{								\
 		.reg_offset = off,					\
 		.bits_per_irq = 0,					\
 		.len = length,						\
 		.access_flags = acc,					\
+		.iodev_type = type,					\
 		.read = rd,						\
 		.write = wr,						\
 	}
