@@ -42,6 +42,16 @@ static u64 update_64bit_reg(u64 reg, unsigned int offset, unsigned int len,
 	return reg | ((u64)val << lower);
 }
 
+bool vgic_has_its(struct kvm *kvm)
+{
+	struct vgic_dist *dist = &kvm->arch.vgic;
+
+	if (dist->vgic_model != KVM_DEV_TYPE_ARM_VGIC_V3)
+		return false;
+
+	return false;
+}
+
 static unsigned long vgic_mmio_read_v3_misc(struct kvm_vcpu *vcpu,
 					    gpa_t addr, unsigned int len)
 {
@@ -130,6 +140,32 @@ static void vgic_mmio_write_irouter(struct kvm_vcpu *vcpu,
 
 	spin_unlock(&irq->irq_lock);
 	vgic_put_irq(vcpu->kvm, irq);
+}
+
+static unsigned long vgic_mmio_read_v3r_ctlr(struct kvm_vcpu *vcpu,
+					     gpa_t addr, unsigned int len)
+{
+	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
+
+	return vgic_cpu->lpis_enabled ? GICR_CTLR_ENABLE_LPIS : 0;
+}
+
+
+static void vgic_mmio_write_v3r_ctlr(struct kvm_vcpu *vcpu,
+				     gpa_t addr, unsigned int len,
+				     unsigned long val)
+{
+	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
+	bool was_enabled = vgic_cpu->lpis_enabled;
+
+	if (!vgic_has_its(vcpu->kvm))
+		return;
+
+	vgic_cpu->lpis_enabled = val & GICR_CTLR_ENABLE_LPIS;
+
+	if (!was_enabled && vgic_cpu->lpis_enabled) {
+		/* Eventually do something */
+	}
 }
 
 static unsigned long vgic_mmio_read_v3r_typer(struct kvm_vcpu *vcpu,
@@ -298,12 +334,13 @@ static void vgic_mmio_write_pendbase(struct kvm_vcpu *vcpu,
  * We take some special care here to fix the calculation of the register
  * offset.
  */
-#define REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(off, rd, wr, bpi, acc)	\
+#define REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(off, type, rd, wr, bpi, acc) \
 	{								\
 		.reg_offset = off,					\
 		.bits_per_irq = bpi,					\
 		.len = (bpi * VGIC_NR_PRIVATE_IRQS) / 8,		\
 		.access_flags = acc,					\
+		.iodev_type = type,					\
 		.read = vgic_mmio_read_raz,				\
 		.write = vgic_mmio_write_wi,				\
 	}, {								\
@@ -311,108 +348,109 @@ static void vgic_mmio_write_pendbase(struct kvm_vcpu *vcpu,
 		.bits_per_irq = bpi,					\
 		.len = (bpi * (1024 - VGIC_NR_PRIVATE_IRQS)) / 8,	\
 		.access_flags = acc,					\
+		.iodev_type = type,					\
 		.read = rd,						\
 		.write = wr,						\
 	}
 
 static const struct vgic_register_region vgic_v3_dist_registers[] = {
-	REGISTER_DESC_WITH_LENGTH(GICD_CTLR,
+	REGISTER_DESC_WITH_LENGTH(GICD_CTLR, IODEV_DIST,
 		vgic_mmio_read_v3_misc, vgic_mmio_write_v3_misc, 16,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_IGROUPR,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_IGROUPR, IODEV_DIST,
 		vgic_mmio_read_rao, vgic_mmio_write_wi, 1,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ISENABLER,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ISENABLER, IODEV_DIST,
 		vgic_mmio_read_enable, vgic_mmio_write_senable, 1,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ICENABLER,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ICENABLER, IODEV_DIST,
 		vgic_mmio_read_enable, vgic_mmio_write_cenable, 1,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ISPENDR,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ISPENDR, IODEV_DIST,
 		vgic_mmio_read_pending, vgic_mmio_write_spending, 1,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ICPENDR,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ICPENDR, IODEV_DIST,
 		vgic_mmio_read_pending, vgic_mmio_write_cpending, 1,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ISACTIVER,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ISACTIVER, IODEV_DIST,
 		vgic_mmio_read_active, vgic_mmio_write_sactive, 1,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ICACTIVER,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ICACTIVER, IODEV_DIST,
 		vgic_mmio_read_active, vgic_mmio_write_cactive, 1,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_IPRIORITYR,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_IPRIORITYR, IODEV_DIST,
 		vgic_mmio_read_priority, vgic_mmio_write_priority, 8,
 		VGIC_ACCESS_32bit | VGIC_ACCESS_8bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ITARGETSR,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ITARGETSR, IODEV_DIST,
 		vgic_mmio_read_raz, vgic_mmio_write_wi, 8,
 		VGIC_ACCESS_32bit | VGIC_ACCESS_8bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ICFGR,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_ICFGR, IODEV_DIST,
 		vgic_mmio_read_config, vgic_mmio_write_config, 2,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_IGRPMODR,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_IGRPMODR, IODEV_DIST,
 		vgic_mmio_read_raz, vgic_mmio_write_wi, 1,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_IROUTER,
+	REGISTER_DESC_WITH_BITS_PER_IRQ_SHARED(GICD_IROUTER, IODEV_DIST,
 		vgic_mmio_read_irouter, vgic_mmio_write_irouter, 64,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICD_IDREGS,
+	REGISTER_DESC_WITH_LENGTH(GICD_IDREGS, IODEV_DIST,
 		vgic_mmio_read_v3_idregs, vgic_mmio_write_wi, 48,
 		VGIC_ACCESS_32bit),
 };
 
 static const struct vgic_register_region vgic_v3_rdbase_registers[] = {
-	REGISTER_DESC_WITH_LENGTH(GICR_CTLR,
-		vgic_mmio_read_raz, vgic_mmio_write_wi, 4,
+	REGISTER_DESC_WITH_LENGTH(GICR_CTLR, IODEV_REDIST,
+		vgic_mmio_read_v3r_ctlr, vgic_mmio_write_v3r_ctlr, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_IIDR,
+	REGISTER_DESC_WITH_LENGTH(GICR_IIDR, IODEV_REDIST,
 		vgic_mmio_read_v3r_iidr, vgic_mmio_write_wi, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_TYPER,
+	REGISTER_DESC_WITH_LENGTH(GICR_TYPER, IODEV_REDIST,
 		vgic_mmio_read_v3r_typer, vgic_mmio_write_wi, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_PROPBASER,
+	REGISTER_DESC_WITH_LENGTH(GICR_PROPBASER, IODEV_REDIST,
 		vgic_mmio_read_propbase, vgic_mmio_write_propbase, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_PENDBASER,
+	REGISTER_DESC_WITH_LENGTH(GICR_PENDBASER, IODEV_REDIST,
 		vgic_mmio_read_pendbase, vgic_mmio_write_pendbase, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_IDREGS,
+	REGISTER_DESC_WITH_LENGTH(GICR_IDREGS, IODEV_REDIST,
 		vgic_mmio_read_v3_idregs, vgic_mmio_write_wi, 48,
 		VGIC_ACCESS_32bit),
 };
 
 static const struct vgic_register_region vgic_v3_sgibase_registers[] = {
-	REGISTER_DESC_WITH_LENGTH(GICR_IGROUPR0,
+	REGISTER_DESC_WITH_LENGTH(GICR_IGROUPR0, IODEV_REDIST,
 		vgic_mmio_read_rao, vgic_mmio_write_wi, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_ISENABLER0,
+	REGISTER_DESC_WITH_LENGTH(GICR_ISENABLER0, IODEV_REDIST,
 		vgic_mmio_read_enable, vgic_mmio_write_senable, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_ICENABLER0,
+	REGISTER_DESC_WITH_LENGTH(GICR_ICENABLER0, IODEV_REDIST,
 		vgic_mmio_read_enable, vgic_mmio_write_cenable, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_ISPENDR0,
+	REGISTER_DESC_WITH_LENGTH(GICR_ISPENDR0, IODEV_REDIST,
 		vgic_mmio_read_pending, vgic_mmio_write_spending, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_ICPENDR0,
+	REGISTER_DESC_WITH_LENGTH(GICR_ICPENDR0, IODEV_REDIST,
 		vgic_mmio_read_pending, vgic_mmio_write_cpending, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_ISACTIVER0,
+	REGISTER_DESC_WITH_LENGTH(GICR_ISACTIVER0, IODEV_REDIST,
 		vgic_mmio_read_active, vgic_mmio_write_sactive, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_ICACTIVER0,
+	REGISTER_DESC_WITH_LENGTH(GICR_ICACTIVER0, IODEV_REDIST,
 		vgic_mmio_read_active, vgic_mmio_write_cactive, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_IPRIORITYR0,
+	REGISTER_DESC_WITH_LENGTH(GICR_IPRIORITYR0, IODEV_REDIST,
 		vgic_mmio_read_priority, vgic_mmio_write_priority, 32,
 		VGIC_ACCESS_32bit | VGIC_ACCESS_8bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_ICFGR0,
+	REGISTER_DESC_WITH_LENGTH(GICR_ICFGR0, IODEV_REDIST,
 		vgic_mmio_read_config, vgic_mmio_write_config, 8,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_IGRPMODR0,
+	REGISTER_DESC_WITH_LENGTH(GICR_IGRPMODR0, IODEV_REDIST,
 		vgic_mmio_read_raz, vgic_mmio_write_wi, 4,
 		VGIC_ACCESS_32bit),
-	REGISTER_DESC_WITH_LENGTH(GICR_NSACR,
+	REGISTER_DESC_WITH_LENGTH(GICR_NSACR, IODEV_REDIST,
 		vgic_mmio_read_raz, vgic_mmio_write_wi, 4,
 		VGIC_ACCESS_32bit),
 };
