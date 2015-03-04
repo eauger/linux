@@ -39,6 +39,7 @@ struct vgic_vmcr {
 struct vgic_irq *vgic_get_irq(struct kvm *kvm, struct kvm_vcpu *vcpu,
 			      u32 intid);
 void vgic_put_irq(struct kvm *kvm, struct vgic_irq *irq);
+void vgic_put_irq_locked(struct kvm *kvm, struct vgic_irq *irq);
 bool vgic_queue_irq_unlock(struct kvm *kvm, struct vgic_irq *irq);
 void vgic_kick_vcpus(struct kvm *kvm);
 
@@ -77,6 +78,7 @@ int vgic_v3_map_resources(struct kvm *kvm);
 int vgic_register_redist_iodevs(struct kvm *kvm, gpa_t dist_base_address);
 bool vgic_has_its(struct kvm *kvm);
 int kvm_vgic_register_its_device(void);
+struct vgic_irq *vgic_its_get_lpi(struct kvm *kvm, u32 intid);
 #else
 static inline void vgic_v3_process_maintenance(struct kvm_vcpu *vcpu)
 {
@@ -137,6 +139,11 @@ static inline bool vgic_has_its(struct kvm *kvm)
 static inline int kvm_vgic_register_its_device(void)
 {
 	return -ENODEV;
+}
+
+static inline struct vgic_irq *vgic_its_get_lpi(struct kvm *kvm, u32 intid)
+{
+	return NULL;
 }
 #endif
 
