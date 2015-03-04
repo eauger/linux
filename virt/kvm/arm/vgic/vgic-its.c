@@ -33,6 +33,31 @@
 #include "vgic.h"
 #include "vgic-mmio.h"
 
+/*
+ * Iterate over the VM's list of mapped LPIs to find the one with a
+ * matching interrupt ID and return a reference to the IRQ structure.
+ */
+struct vgic_irq *vgic_its_get_lpi(struct kvm *kvm, u32 intid)
+{
+	struct vgic_dist *dist = &kvm->arch.vgic;
+	struct vgic_irq *irq = NULL;
+
+	spin_lock(&dist->lpi_list_lock);
+	list_for_each_entry(irq, &dist->lpi_list_head, lpi_entry) {
+		if (irq->intid != intid)
+			continue;
+
+		kref_get(&irq->refcount);
+		goto out_unlock;
+	}
+	irq = NULL;
+
+out_unlock:
+	spin_unlock(&dist->lpi_list_lock);
+
+	return irq;
+}
+
 struct its_device {
 	struct list_head dev_list;
 
@@ -56,10 +81,16 @@ struct its_collection {
 struct its_itte {
 	struct list_head itte_list;
 
+	struct vgic_irq *irq;
 	struct its_collection *collection;
 	u32 lpi;
 	u32 event_id;
 };
+
+/* To be used as an iterator this macro misses the enclosing parentheses */
+#define for_each_lpi_its(dev, itte, its) \
+	list_for_each_entry(dev, &(its)->device_list, dev_list) \
+		list_for_each_entry(itte, &(dev)->itt_head, itte_list)
 
 #define CBASER_ADDRESS(x)	((x) & GENMASK_ULL(51, 12))
 
@@ -144,6 +175,7 @@ static unsigned long vgic_mmio_read_its_idregs(struct kvm *kvm,
 static void its_free_itte(struct kvm *kvm, struct its_itte *itte)
 {
 	list_del(&itte->itte_list);
+	vgic_put_irq(kvm, itte->irq);
 	kfree(itte);
 }
 
