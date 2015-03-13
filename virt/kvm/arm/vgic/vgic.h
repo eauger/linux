@@ -81,6 +81,7 @@ bool vgic_has_its(struct kvm *kvm);
 int kvm_vgic_register_its_device(void);
 struct vgic_irq *vgic_its_get_lpi(struct kvm *kvm, u32 intid);
 void vgic_enable_lpis(struct kvm_vcpu *vcpu);
+int vgic_its_inject_msi(struct kvm *kvm, struct kvm_msi *msi);
 #else
 static inline void vgic_v3_process_maintenance(struct kvm_vcpu *vcpu)
 {
@@ -150,6 +151,11 @@ static inline struct vgic_irq *vgic_its_get_lpi(struct kvm *kvm, u32 intid)
 
 static inline void vgic_enable_lpis(struct kvm_vcpu *vcpu)
 {
+}
+
+static inline int vgic_its_inject_msi(struct kvm *kvm, struct kvm_msi *msi)
+{
+	return -ENODEV;
 }
 #endif
 
