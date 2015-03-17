@@ -86,6 +86,16 @@ int kvm_arch_dev_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_VCPU_ATTRIBUTES:
 		r = 1;
 		break;
+	case KVM_CAP_MSI_DEVID:
+#ifdef CONFIG_KVM_NEW_VGIC
+		if (!kvm)
+			r = -EINVAL;
+		else
+			r = kvm->arch.vgic.msis_require_devid;
+#else
+		r = -EINVAL;
+#endif
+		break;
 	default:
 		r = 0;
 	}
