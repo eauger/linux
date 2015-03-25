@@ -29,6 +29,19 @@ static unsigned long extract_bytes(unsigned long data, unsigned int offset,
 	return (data >> (offset * 8)) & GENMASK_ULL(num * 8 - 1, 0);
 }
 
+/* allows updates of any half of a 64-bit register (or the whole thing) */
+static u64 update_64bit_reg(u64 reg, unsigned int offset, unsigned int len,
+			    unsigned long val)
+{
+	int lower = (offset & 4) * 8;
+	int upper = lower + 8 * len - 1;
+
+	reg &= ~GENMASK_ULL(upper, lower);
+	val &= GENMASK_ULL(len * 8 - 1, 0);
+
+	return reg | ((u64)val << lower);
+}
+
 static unsigned long vgic_mmio_read_v3_misc(struct kvm_vcpu *vcpu,
 					    gpa_t addr, unsigned int len)
 {
@@ -152,6 +165,132 @@ static unsigned long vgic_mmio_read_v3_idregs(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
+/* We want to avoid outer shareable. */
+u64 vgic_sanitise_shareability(u64 reg)
+{
+	switch (reg & GIC_BASER_SHAREABILITY_MASK) {
+	case GIC_BASER_OuterShareable:
+		return GIC_BASER_InnerShareable;
+	default:
+		return reg;
+	}
+}
+
+/* Non-cacheable or same-as-inner are OK. */
+u64 vgic_sanitise_outer_cacheability(u64 reg)
+{
+	switch (reg & GIC_BASER_CACHE_MASK) {
+	case GIC_BASER_CACHE_SameAsInner:
+	case GIC_BASER_CACHE_nC:
+		return reg;
+	default:
+		return GIC_BASER_CACHE_nC;
+	}
+}
+
+/* Avoid any inner non-cacheable mapping. */
+u64 vgic_sanitise_inner_cacheability(u64 reg)
+{
+	switch (reg & GIC_BASER_CACHE_MASK) {
+	case GIC_BASER_CACHE_nCnB:
+	case GIC_BASER_CACHE_nC:
+		return GIC_BASER_CACHE_RaWb;
+	default:
+		return reg;
+	}
+}
+
+u64 vgic_sanitise_field(u64 reg, int field_shift, u64 field_mask,
+			u64 (*sanitise_fn)(u64))
+{
+	u64 field = (reg >> field_shift) & field_mask;
+
+	field = sanitise_fn(field) << field_shift;
+	return (reg & ~(field_mask << field_shift)) | field;
+}
+
+static u64 vgic_sanitise_pendbaser(u64 reg)
+{
+	reg = vgic_sanitise_field(reg, GICR_PENDBASER_SHAREABILITY_SHIFT,
+				  GIC_BASER_SHAREABILITY_MASK,
+				  vgic_sanitise_shareability);
+	reg = vgic_sanitise_field(reg, GICR_PENDBASER_INNER_CACHEABILITY_SHIFT,
+				  GIC_BASER_CACHE_MASK,
+				  vgic_sanitise_inner_cacheability);
+	reg = vgic_sanitise_field(reg, GICR_PENDBASER_OUTER_CACHEABILITY_SHIFT,
+				  GIC_BASER_CACHE_MASK,
+				  vgic_sanitise_outer_cacheability);
+	return reg;
+}
+
+static u64 vgic_sanitise_propbaser(u64 reg)
+{
+	reg = vgic_sanitise_field(reg, GICR_PROPBASER_SHAREABILITY_SHIFT,
+				  GIC_BASER_SHAREABILITY_MASK,
+				  vgic_sanitise_shareability);
+	reg = vgic_sanitise_field(reg, GICR_PROPBASER_INNER_CACHEABILITY_SHIFT,
+				  GIC_BASER_CACHE_MASK,
+				  vgic_sanitise_inner_cacheability);
+	reg = vgic_sanitise_field(reg, GICR_PROPBASER_OUTER_CACHEABILITY_SHIFT,
+				  GIC_BASER_CACHE_MASK,
+				  vgic_sanitise_outer_cacheability);
+	return reg;
+}
+
+#define PROPBASER_RES0_MASK						\
+	(GENMASK_ULL(63, 59) | GENMASK_ULL(55, 52) | GENMASK_ULL(6, 5))
+#define PENDBASER_RES0_MASK						\
+	(BIT_ULL(63) | GENMASK_ULL(61, 59) | GENMASK_ULL(55, 52) |	\
+	 GENMASK_ULL(15, 12) | GENMASK_ULL(6, 0))
+
+static unsigned long vgic_mmio_read_propbase(struct kvm_vcpu *vcpu,
+					     gpa_t addr, unsigned int len)
+{
+	struct vgic_dist *dist = &vcpu->kvm->arch.vgic;
+
+	return extract_bytes(dist->propbaser, addr & 7, len);
+}
+
+static void vgic_mmio_write_propbase(struct kvm_vcpu *vcpu,
+				     gpa_t addr, unsigned int len,
+				     unsigned long val)
+{
+	struct vgic_dist *dist = &vcpu->kvm->arch.vgic;
+	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
+
+	/* Storing a value with LPIs already enabled is undefined */
+	if (vgic_cpu->lpis_enabled)
+		return;
+
+	dist->propbaser = update_64bit_reg(dist->propbaser, addr & 4, len, val);
+	dist->propbaser &= ~PROPBASER_RES0_MASK;
+	dist->propbaser = vgic_sanitise_propbaser(dist->propbaser);
+}
+
+static unsigned long vgic_mmio_read_pendbase(struct kvm_vcpu *vcpu,
+					     gpa_t addr, unsigned int len)
+{
+	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
+
+	return extract_bytes(vgic_cpu->pendbaser, addr & 7, len);
+}
+
+static void vgic_mmio_write_pendbase(struct kvm_vcpu *vcpu,
+				     gpa_t addr, unsigned int len,
+				     unsigned long val)
+{
+	struct vgic_cpu *vgic_cpu = &vcpu->arch.vgic_cpu;
+
+	/* Storing a value with LPIs already enabled is undefined */
+	if (vgic_cpu->lpis_enabled)
+		return;
+
+	vgic_cpu->pendbaser = update_64bit_reg(vgic_cpu->pendbaser,
+					       addr & 4, len, val);
+	vgic_cpu->pendbaser &= ~PENDBASER_RES0_MASK;
+	vgic_cpu->pendbaser = vgic_sanitise_pendbaser(vgic_cpu->pendbaser);
+}
+
 /*
  * The GICv3 per-IRQ registers are split to control PPIs and SGIs in the
  * redistributors, while SPIs are covered by registers in the distributor
@@ -232,10 +371,10 @@ static const struct vgic_register_region vgic_v3_rdbase_registers[] = {
 		vgic_mmio_read_v3r_typer, vgic_mmio_write_wi, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
 	REGISTER_DESC_WITH_LENGTH(GICR_PROPBASER,
-		vgic_mmio_read_raz, vgic_mmio_write_wi, 8,
+		vgic_mmio_read_propbase, vgic_mmio_write_propbase, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
 	REGISTER_DESC_WITH_LENGTH(GICR_PENDBASER,
-		vgic_mmio_read_raz, vgic_mmio_write_wi, 8,
+		vgic_mmio_read_pendbase, vgic_mmio_write_pendbase, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
 	REGISTER_DESC_WITH_LENGTH(GICR_IDREGS,
 		vgic_mmio_read_v3_idregs, vgic_mmio_write_wi, 48,
