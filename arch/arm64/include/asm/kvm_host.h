@@ -34,6 +34,7 @@
 #define KVM_PRIVATE_MEM_SLOTS 4
 #define KVM_COALESCED_MMIO_PAGE_OFFSET 1
 #define KVM_HALT_POLL_NS_DEFAULT 500000
+#define KVM_IRQCHIP_NUM_PINS 988 /* 1020 - 32 is the number of SPIs */
 
 #include <kvm/arm_vgic.h>
 #include <kvm/arm_arch_timer.h>
