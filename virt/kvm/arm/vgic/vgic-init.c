@@ -264,6 +264,10 @@ int vgic_init(struct kvm *kvm)
 	kvm_for_each_vcpu(i, vcpu, kvm)
 		kvm_vgic_vcpu_init(vcpu);
 
+	ret = kvm_setup_default_irq_routing(kvm);
+	if (ret)
+		goto out;
+
 	dist->initialized = true;
 out:
 	return ret;
@@ -455,5 +459,28 @@ int kvm_vgic_hyp_init(void)
 out_free_irq:
 	free_percpu_irq(kvm_vgic_global_state.maint_irq,
 			kvm_get_running_vcpus());
+	return ret;
+}
+
+int kvm_setup_default_irq_routing(struct kvm *kvm)
+{
+	struct kvm_irq_routing_entry *entries;
+	struct vgic_dist *dist = &kvm->arch.vgic;
+	u32 nr = dist->nr_spis;
+	int i, ret;
+
+	entries = kcalloc(nr, sizeof(struct kvm_kernel_irq_routing_entry),
+			  GFP_KERNEL);
+	if (!entries)
+		return -ENOMEM;
+
+	for (i = 0; i < nr; i++) {
+		entries[i].gsi = i;
+		entries[i].type = KVM_IRQ_ROUTING_IRQCHIP;
+		entries[i].u.irqchip.irqchip = 0;
+		entries[i].u.irqchip.pin = i;
+	}
+	ret = kvm_set_irq_routing(kvm, entries, nr, 0);
+	kfree(entries);
 	return ret;
 }

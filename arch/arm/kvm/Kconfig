@@ -50,6 +50,8 @@ config KVM_NEW_VGIC
 	bool "New VGIC implementation"
 	depends on KVM
 	default y
+	select HAVE_KVM_IRQCHIP
+	select HAVE_KVM_IRQ_ROUTING
 	---help---
 	  uses the new VGIC implementation
 
