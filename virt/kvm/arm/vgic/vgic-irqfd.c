@@ -98,7 +98,7 @@ int kvm_set_msi(struct kvm_kernel_irq_routing_entry *e,
 	msi.devid = e->devid;
 
 	if (!vgic_has_its(kvm))
-		return -ENODEV;
+		return vgic_v2m_inject_msi(kvm, &msi);
 
 	return vgic_its_inject_msi(kvm, &msi);
 }
