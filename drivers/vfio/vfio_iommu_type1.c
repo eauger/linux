@@ -965,6 +965,42 @@ static int vfio_domains_have_iommu_cache(struct vfio_iommu *iommu)
 	return ret;
 }
 
+static int add_resv_iova_range(struct vfio_info_cap *caps, u64 start, u64 end)
+{
+	struct vfio_iommu_type1_info_cap_resv_iova_range *cap;
+	struct vfio_info_cap_header *header;
+
+	header = vfio_info_cap_add(caps, sizeof(*cap),
+			VFIO_IOMMU_TYPE1_INFO_CAP_RESV_IOVA_RANGE, 1);
+
+	if (IS_ERR(header))
+		return PTR_ERR(header);
+
+	cap = container_of(header,
+			   struct vfio_iommu_type1_info_cap_resv_iova_range,
+			   header);
+
+	cap->start = start;
+	cap->end = end;
+	return 0;
+}
+
+static int build_resv_iova_range_caps(struct vfio_iommu *iommu,
+				      struct vfio_info_cap *caps)
+{
+	struct vfio_domain *domain;
+	struct iommu_reserved_region *resv;
+
+	domain = list_first_entry(&iommu->domain_list,
+				  struct vfio_domain, next);
+
+	iommu_reserved_region_for_each(resv, domain->domain)
+		add_resv_iova_range(caps, resv->start,
+				    resv->start + resv->length - 1);
+
+	return 0;
+}
+
 static long vfio_iommu_type1_ioctl(void *iommu_data,
 				   unsigned int cmd, unsigned long arg)
 {
@@ -986,8 +1022,10 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		}
 	} else if (cmd == VFIO_IOMMU_GET_INFO) {
 		struct vfio_iommu_type1_info info;
+		struct vfio_info_cap caps = { .buf = NULL, .size = 0 };
+		int ret;
 
-		minsz = offsetofend(struct vfio_iommu_type1_info, iova_pgsizes);
+		minsz = offsetofend(struct vfio_iommu_type1_info, cap_offset);
 
 		if (copy_from_user(&info, (void __user *)arg, minsz))
 			return -EFAULT;
@@ -998,6 +1036,29 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		info.flags = VFIO_IOMMU_INFO_PGSIZES;
 
 		info.iova_pgsizes = vfio_pgsize_bitmap(iommu);
+
+		ret = build_resv_iova_range_caps(iommu, &caps);
+		if (ret)
+			return ret;
+
+		if (caps.size) {
+			info.flags |= VFIO_IOMMU_INFO_CAPS;
+			if (info.argsz < sizeof(info) + caps.size) {
+				info.argsz = sizeof(info) + caps.size;
+				info.cap_offset = 0;
+			} else {
+				vfio_info_cap_shift(&caps, sizeof(info));
+				if (copy_to_user((void __user *)arg +
+						sizeof(info), caps.buf,
+						caps.size)) {
+					kfree(caps.buf);
+					return -EFAULT;
+				}
+				info.cap_offset = sizeof(info);
+			}
+
+			kfree(caps.buf);
+		}
 
 		return copy_to_user((void __user *)arg, &info, minsz) ?
 			-EFAULT : 0;
