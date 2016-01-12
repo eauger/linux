@@ -1147,6 +1147,46 @@ static int vfio_domains_have_iommu_cache(struct vfio_iommu *iommu)
 	return ret;
 }
 
+static int msi_resv_caps(struct vfio_iommu *iommu, struct vfio_info_cap *caps)
+{
+	struct iommu_domain_msi_resv msi_resv = {.size = 0, .alignment = 0};
+	struct vfio_iommu_type1_info_cap_msi_resv *cap;
+	struct vfio_info_cap_header *header;
+	struct iommu_domain_msi_resv iter;
+	struct vfio_domain *d;
+
+	mutex_lock(&iommu->lock);
+
+	list_for_each_entry(d, &iommu->domain_list, next) {
+		if (iommu_domain_get_attr(d->domain,
+					  DOMAIN_ATTR_MSI_RESV, &iter))
+			continue;
+		if (iter.size >  msi_resv.size) {
+			msi_resv.size = iter.size;
+			msi_resv.alignment = iter.alignment;
+		}
+	}
+
+	if (!msi_resv.size)
+		return 0;
+
+	mutex_unlock(&iommu->lock);
+
+	header = vfio_info_cap_add(caps, sizeof(*cap),
+				   VFIO_IOMMU_TYPE1_INFO_CAP_MSI_RESV, 1);
+
+	if (IS_ERR(header))
+		return PTR_ERR(header);
+
+	cap = container_of(header, struct vfio_iommu_type1_info_cap_msi_resv,
+			   header);
+
+	cap->alignment = msi_resv.alignment;
+	cap->size = msi_resv.size;
+
+	return 0;
+}
+
 static long vfio_iommu_type1_ioctl(void *iommu_data,
 				   unsigned int cmd, unsigned long arg)
 {
@@ -1168,8 +1208,10 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		}
 	} else if (cmd == VFIO_IOMMU_GET_INFO) {
 		struct vfio_iommu_type1_info info;
+		struct vfio_info_cap caps = { .buf = NULL, .size = 0 };
+		int ret;
 
-		minsz = offsetofend(struct vfio_iommu_type1_info, iova_pgsizes);
+		minsz = offsetofend(struct vfio_iommu_type1_info, cap_offset);
 
 		if (copy_from_user(&info, (void __user *)arg, minsz))
 			return -EFAULT;
@@ -1180,6 +1222,29 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		info.flags = VFIO_IOMMU_INFO_PGSIZES;
 
 		info.iova_pgsizes = vfio_pgsize_bitmap(iommu);
+
+		ret = msi_resv_caps(iommu, &caps);
+		if (ret)
+			return ret;
+
+		if (caps.size) {
+			info.flags |= VFIO_IOMMU_INFO_CAPS;
+			if (info.argsz < sizeof(info) + caps.size) {
+				info.argsz = sizeof(info) + caps.size;
+				info.cap_offset = 0;
+			} else {
+				vfio_info_cap_shift(&caps, sizeof(info));
+				if (copy_to_user((void __user *)arg +
+						sizeof(info), caps.buf,
+						caps.size)) {
+					kfree(caps.buf);
+					return -EFAULT;
+				}
+				info.cap_offset = sizeof(info);
+			}
+
+			kfree(caps.buf);
+		}
 
 		return copy_to_user((void __user *)arg, &info, minsz) ?
 			-EFAULT : 0;
