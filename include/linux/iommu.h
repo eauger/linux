@@ -84,6 +84,8 @@ struct iommu_domain {
 	void *handler_token;
 	struct iommu_domain_geometry geometry;
 	void *iova_cookie;
+	struct list_head reserved_regions;
+	struct mutex resv_mutex; /* protects the reserved region list */
 };
 
 enum iommu_cap {
@@ -130,6 +132,21 @@ struct iommu_dm_region {
 	size_t			length;
 	int			prot;
 };
+
+/**
+ * struct iommu_reserved_region - descriptor for a reserved iova region
+ * @list: Linked list pointers
+ * @start: IOVA base address of the region
+ * @length: Length of the region in bytes
+ */
+struct iommu_reserved_region {
+	struct list_head	list;
+	dma_addr_t		start;
+	size_t			length;
+};
+
+#define iommu_reserved_region_for_each(resv, d) \
+	list_for_each_entry(resv, &(d)->reserved_regions, list)
 
 #ifdef CONFIG_IOMMU_API
 
