@@ -38,6 +38,8 @@
 #include <linux/workqueue.h>
 #include <linux/msi-iommu.h>
 #include <linux/msi-doorbell.h>
+#include <linux/irqdomain.h>
+#include <linux/msi.h>
 
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_AUTHOR   "Alex Williamson <alex.williamson@redhat.com>"
@@ -1103,6 +1105,55 @@ static int vfio_domains_have_iommu_cache(struct vfio_iommu *iommu)
 	return ret;
 }
 
+static int compute_msi_geometry_caps(struct vfio_iommu *iommu,
+				     struct vfio_info_cap *caps)
+{
+	struct vfio_iommu_type1_info_cap_msi_geometry *vfio_msi_geometry;
+	unsigned long order = __ffs(vfio_pgsize_bitmap(iommu));
+	struct iommu_domain_msi_geometry msi_geometry;
+	struct vfio_info_cap_header *header;
+	struct vfio_domain *d;
+	bool reserved;
+	size_t size;
+
+	mutex_lock(&iommu->lock);
+	/* All domains have same require_msi_map property, pick first */
+	d = list_first_entry(&iommu->domain_list, struct vfio_domain, next);
+	iommu_domain_get_attr(d->domain, DOMAIN_ATTR_MSI_GEOMETRY,
+			      &msi_geometry);
+	reserved = !msi_geometry.iommu_msi_supported;
+
+	mutex_unlock(&iommu->lock);
+
+	size = sizeof(*vfio_msi_geometry);
+	header = vfio_info_cap_add(caps, size,
+				   VFIO_IOMMU_TYPE1_INFO_CAP_MSI_GEOMETRY, 1);
+
+	if (IS_ERR(header))
+		return PTR_ERR(header);
+
+	vfio_msi_geometry = container_of(header,
+				struct vfio_iommu_type1_info_cap_msi_geometry,
+				header);
+
+	vfio_msi_geometry->flags = reserved;
+	if (reserved) {
+		vfio_msi_geometry->aperture_start = msi_geometry.aperture_start;
+		vfio_msi_geometry->aperture_end = msi_geometry.aperture_end;
+		return 0;
+	}
+
+	vfio_msi_geometry->order = order;
+	/*
+	 * we compute a system-wide requirement based on all the registered
+	 * doorbells
+	 */
+	vfio_msi_geometry->size =
+		msi_doorbell_pages(order) * ((uint64_t) 1 << order);
+
+	return 0;
+}
+
 static long vfio_iommu_type1_ioctl(void *iommu_data,
 				   unsigned int cmd, unsigned long arg)
 {
@@ -1124,8 +1175,10 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		}
 	} else if (cmd == VFIO_IOMMU_GET_INFO) {
 		struct vfio_iommu_type1_info info;
+		struct vfio_info_cap caps = { .buf = NULL, .size = 0 };
+		int ret;
 
-		minsz = offsetofend(struct vfio_iommu_type1_info, iova_pgsizes);
+		minsz = offsetofend(struct vfio_iommu_type1_info, cap_offset);
 
 		if (copy_from_user(&info, (void __user *)arg, minsz))
 			return -EFAULT;
@@ -1136,6 +1189,29 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		info.flags = VFIO_IOMMU_INFO_PGSIZES;
 
 		info.iova_pgsizes = vfio_pgsize_bitmap(iommu);
+
+		ret = compute_msi_geometry_caps(iommu, &caps);
+		if (ret)
+			return ret;
+
+		if (caps.size) {
+			info.flags |= VFIO_IOMMU_INFO_CAPS;
+			if (info.argsz < sizeof(info) + caps.size) {
+				info.argsz = sizeof(info) + caps.size;
+				info.cap_offset = 0;
+			} else {
+				vfio_info_cap_shift(&caps, sizeof(info));
+				if (copy_to_user((void __user *)arg +
+						sizeof(info), caps.buf,
+						caps.size)) {
+					kfree(caps.buf);
+					return -EFAULT;
+				}
+				info.cap_offset = sizeof(info);
+			}
+
+			kfree(caps.buf);
+		}
 
 		return copy_to_user((void __user *)arg, &info, minsz) ?
 			-EFAULT : 0;
