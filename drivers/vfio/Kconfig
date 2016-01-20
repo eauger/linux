@@ -1,6 +1,7 @@
 config VFIO_IOMMU_TYPE1
 	tristate
 	depends on VFIO
+	select IOMMU_DMA
 	default n
 
 config VFIO_IOMMU_SPAPR_TCE

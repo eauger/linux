@@ -36,6 +36,7 @@
 #include <linux/uaccess.h>
 #include <linux/vfio.h>
 #include <linux/workqueue.h>
+#include <linux/dma-iommu.h>
 
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_AUTHOR   "Alex Williamson <alex.williamson@redhat.com>"
@@ -387,7 +388,7 @@ static void vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma)
 	struct vfio_domain *domain, *d;
 	long unlocked = 0;
 
-	if (!dma->size)
+	if (!dma->size || dma->type != VFIO_IOVA_USER)
 		return;
 	/*
 	 * We use the IOMMU to track the physical addresses, otherwise we'd
@@ -723,6 +724,13 @@ static int vfio_iommu_replay(struct vfio_iommu *iommu,
 
 		dma = rb_entry(n, struct vfio_dma, node);
 		iova = dma->iova;
+
+		if (dma->type == VFIO_IOVA_RESERVED_MSI) {
+			ret = iommu_get_dma_msi_region_cookie(domain->domain,
+						     dma->iova, dma->size);
+			WARN_ON(ret);
+			continue;
+		}
 
 		while (iova < dma->iova + dma->size) {
 			phys_addr_t phys = iommu_iova_to_phys(d->domain, iova);
