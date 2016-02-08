@@ -37,6 +37,8 @@
 #include <linux/vfio.h>
 #include <linux/workqueue.h>
 #include <linux/msi-iommu.h>
+#include <linux/irqdomain.h>
+#include <linux/msi.h>
 
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_AUTHOR   "Alex Williamson <alex.williamson@redhat.com>"
@@ -777,6 +779,33 @@ static int vfio_bus_type(struct device *dev, void *data)
 	return 0;
 }
 
+/**
+ * vfio_safe_irq_domain: returns whether the irq domain
+ * the device is attached to is safe with respect to MSI isolation.
+ * If the irq domain is not an MSI domain, we return it is safe.
+ *
+ * @dev: device handle
+ * @data: unused
+ * returns 0 if the irq domain is safe, -1 if not.
+ */
+static int vfio_safe_irq_domain(struct device *dev, void *data)
+{
+#ifdef CONFIG_GENERIC_MSI_IRQ_DOMAIN
+	struct irq_domain *domain;
+	struct msi_domain_info *info;
+
+	domain = dev_get_msi_domain(dev);
+	if (!domain)
+		return 0;
+
+	info = msi_get_domain_info(domain);
+
+	if (!(info->flags & MSI_FLAG_IRQ_REMAPPING))
+		return -1;
+#endif
+	return 0;
+}
+
 static int vfio_iommu_replay(struct vfio_iommu *iommu,
 			     struct vfio_domain *domain)
 {
@@ -870,7 +899,7 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 	struct vfio_group *group, *g;
 	struct vfio_domain *domain, *d;
 	struct bus_type *bus = NULL;
-	int ret;
+	int ret, safe_irq_domains;
 
 	mutex_lock(&iommu->lock);
 
@@ -892,6 +921,13 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 	}
 
 	group->iommu_group = iommu_group;
+
+	/*
+	 * Determine if all the devices of the group have a safe irq domain
+	 * with respect to MSI isolation
+	 */
+	safe_irq_domains = !iommu_group_for_each_dev(iommu_group, &bus,
+				       vfio_safe_irq_domain);
 
 	/* Determine bus_type in order to allocate a domain */
 	ret = iommu_group_for_each_dev(iommu_group, &bus, vfio_bus_type);
@@ -920,8 +956,12 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 	INIT_LIST_HEAD(&domain->group_list);
 	list_add(&group->next, &domain->group_list);
 
+	/*
+	 * to advertise safe interrupts either the IOMMU or the MSI controllers
+	 * must support IRQ remapping/interrupt translation
+	 */
 	if (!allow_unsafe_interrupts &&
-	    !iommu_capable(bus, IOMMU_CAP_INTR_REMAP)) {
+	    (!iommu_capable(bus, IOMMU_CAP_INTR_REMAP) && !safe_irq_domains)) {
 		pr_warn("%s: No interrupt remapping support.  Use the module param \"allow_unsafe_interrupts\" to enable VFIO IOMMU support on this platform\n",
 		       __func__);
 		ret = -EPERM;
