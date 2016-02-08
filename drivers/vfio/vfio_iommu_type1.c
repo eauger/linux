@@ -442,6 +442,29 @@ static void vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma)
 }
 
 /**
+ * vfio_msi_resv - Return whether any VFIO iommu domain requires
+ * MSI mapping
+ *
+ * @iommu: vfio iommu handle
+ *
+ * Return: true of MSI mapping is needed, false otherwise
+ */
+static bool vfio_msi_resv(struct vfio_iommu *iommu)
+{
+	struct iommu_domain_msi_resv msi_resv;
+	struct vfio_domain *d;
+	int ret;
+
+	list_for_each_entry(d, &iommu->domain_list, next) {
+		ret = iommu_domain_get_attr(d->domain, DOMAIN_ATTR_MSI_RESV,
+					    &msi_resv);
+		if (!ret)
+			return true;
+	}
+	return false;
+}
+
+/**
  * vfio_set_msi_aperture - Sets the msi aperture on all domains
  * requesting MSI mapping
  *
@@ -945,8 +968,13 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 	INIT_LIST_HEAD(&domain->group_list);
 	list_add(&group->next, &domain->group_list);
 
+	/*
+	 * to advertise safe interrupts either the IOMMU or the MSI controllers
+	 * must support IRQ remapping (aka. interrupt translation)
+	 */
 	if (!allow_unsafe_interrupts &&
-	    !iommu_capable(bus, IOMMU_CAP_INTR_REMAP)) {
+	    (!iommu_capable(bus, IOMMU_CAP_INTR_REMAP) &&
+		!(vfio_msi_resv(iommu) && iommu_msi_doorbell_safe()))) {
 		pr_warn("%s: No interrupt remapping support.  Use the module param \"allow_unsafe_interrupts\" to enable VFIO IOMMU support on this platform\n",
 		       __func__);
 		ret = -EPERM;
