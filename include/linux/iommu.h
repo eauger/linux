@@ -90,6 +90,7 @@ struct iommu_domain {
 	struct iommu_domain_geometry geometry;
 	struct iommu_domain_msi_geometry msi_geometry;
 	void *iova_cookie;
+	void *msi_cookie;
 };
 
 enum iommu_cap {
