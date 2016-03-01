@@ -63,7 +63,8 @@ static struct msi_domain_ops its_pmsi_ops = {
 };
 
 static struct msi_domain_info its_pmsi_domain_info = {
-	.flags	= (MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS),
+	.flags	= (MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS |
+		   MSI_FLAG_IRQ_REMAPPING),
 	.ops	= &its_pmsi_ops,
 	.chip	= &its_pmsi_irq_chip,
 };

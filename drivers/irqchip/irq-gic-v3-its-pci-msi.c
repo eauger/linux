@@ -96,7 +96,8 @@ static struct msi_domain_ops its_pci_msi_ops = {
 
 static struct msi_domain_info its_pci_msi_domain_info = {
 	.flags	= (MSI_FLAG_USE_DEF_DOM_OPS | MSI_FLAG_USE_DEF_CHIP_OPS |
-		   MSI_FLAG_MULTI_PCI_MSI | MSI_FLAG_PCI_MSIX),
+		   MSI_FLAG_MULTI_PCI_MSI | MSI_FLAG_PCI_MSIX |
+		   MSI_FLAG_IRQ_REMAPPING),
 	.ops	= &its_pci_msi_ops,
 	.chip	= &its_msi_irq_chip,
 };
