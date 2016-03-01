@@ -64,8 +64,16 @@ static int msi_compose(struct irq_data *irq_data,
 
 	if (erase)
 		memset(msg, 0, sizeof(*msg));
-	else
+	else {
+		struct device *dev;
+
 		ret = irq_chip_compose_msi_msg(irq_data, msg);
+		if (ret)
+			return ret;
+
+		dev = msi_desc_to_dev(irq_data_get_msi_desc(irq_data));
+		WARN_ON(iommu_msi_msg_pa_to_va(dev, msg));
+	}
 
 	return ret;
 }
