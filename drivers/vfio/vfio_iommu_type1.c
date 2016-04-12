@@ -36,6 +36,7 @@
 #include <linux/uaccess.h>
 #include <linux/vfio.h>
 #include <linux/workqueue.h>
+#include <linux/msi-iommu.h>
 
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_AUTHOR   "Alex Williamson <alex.williamson@redhat.com>"
@@ -445,6 +446,20 @@ static void vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma)
 	vfio_lock_acct(-unlocked);
 }
 
+static int vfio_set_msi_aperture(struct vfio_iommu *iommu,
+				dma_addr_t iova, size_t size)
+{
+	struct vfio_domain *d;
+	int ret = 0;
+
+	list_for_each_entry(d, &iommu->domain_list, next) {
+		ret = iommu_msi_set_aperture(d->domain, iova, iova + size - 1);
+		if (ret)
+			break;
+	}
+	return ret;
+}
+
 static void vfio_remove_dma(struct vfio_iommu *iommu, struct vfio_dma *dma)
 {
 	vfio_unmap_unpin(iommu, dma);
@@ -689,6 +704,63 @@ static int vfio_dma_do_map(struct vfio_iommu *iommu,
 	if (ret)
 		vfio_remove_dma(iommu, dma);
 
+	mutex_unlock(&iommu->lock);
+	return ret;
+}
+
+static int vfio_register_msi_range(struct vfio_iommu *iommu,
+				   struct vfio_iommu_type1_dma_map *map)
+{
+	dma_addr_t iova = map->iova;
+	size_t size = map->size;
+	int ret = 0;
+	struct vfio_dma *dma;
+	unsigned long order;
+	uint64_t mask;
+
+	/* Verify that none of our __u64 fields overflow */
+	if (map->size != size || map->iova != iova)
+		return -EINVAL;
+
+	order =  __ffs(vfio_pgsize_bitmap(iommu));
+	mask = ((uint64_t)1 << order) - 1;
+
+	WARN_ON(mask & PAGE_MASK);
+
+	if (!size || (size | iova) & mask)
+		return -EINVAL;
+
+	/* Don't allow IOVA address wrap */
+	if (iova + size - 1 < iova)
+		return -EINVAL;
+
+	mutex_lock(&iommu->lock);
+
+	if (vfio_find_dma(iommu, iova, size, VFIO_IOVA_ANY)) {
+		ret =  -EEXIST;
+		goto unlock;
+	}
+
+	dma = kzalloc(sizeof(*dma), GFP_KERNEL);
+	if (!dma) {
+		ret = -ENOMEM;
+		goto unlock;
+	}
+
+	dma->iova = iova;
+	dma->size = size;
+	dma->type = VFIO_IOVA_RESERVED;
+
+	ret = vfio_set_msi_aperture(iommu, iova, size);
+	if (ret)
+		goto free_unlock;
+
+	vfio_link_dma(iommu, dma);
+	goto unlock;
+
+free_unlock:
+	kfree(dma);
+unlock:
 	mutex_unlock(&iommu->lock);
 	return ret;
 }
@@ -1062,7 +1134,8 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 	} else if (cmd == VFIO_IOMMU_MAP_DMA) {
 		struct vfio_iommu_type1_dma_map map;
 		uint32_t mask = VFIO_DMA_MAP_FLAG_READ |
-				VFIO_DMA_MAP_FLAG_WRITE;
+				VFIO_DMA_MAP_FLAG_WRITE |
+				VFIO_DMA_MAP_FLAG_RESERVED_MSI_IOVA;
 
 		minsz = offsetofend(struct vfio_iommu_type1_dma_map, size);
 
@@ -1071,6 +1144,9 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 
 		if (map.argsz < minsz || map.flags & ~mask)
 			return -EINVAL;
+
+		if (map.flags & VFIO_DMA_MAP_FLAG_RESERVED_MSI_IOVA)
+			return vfio_register_msi_range(iommu, &map);
 
 		return vfio_dma_do_map(iommu, &map);
 
