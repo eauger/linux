@@ -313,6 +313,26 @@ static inline irq_hw_number_t irqd_to_hwirq(struct irq_data *d)
 }
 
 /**
+ * struct msi_doorbell_info - MSI doorbell region descriptor
+ * @percpu_doorbells: per cpu doorbell base address
+ * @global_doorbell: base address of the doorbell
+ * @doorbell_is_percpu: is the doorbell per cpu or global?
+ * @irq_remapping: is irq_remapping implemented?
+ * @size: size of the doorbell
+ * @prot: iommu protection flag
+ */
+struct msi_doorbell_info {
+	union {
+		phys_addr_t __percpu	*percpu_doorbells;
+		phys_addr_t		global_doorbell;
+	};
+	bool	doorbell_is_percpu;
+	bool	irq_remapping;
+	size_t	size;
+	int	prot;
+};
+
+/**
  * struct irq_chip - hardware interrupt chip descriptor
  *
  * @name:		name for /proc/interrupts
@@ -349,6 +369,7 @@ static inline irq_hw_number_t irqd_to_hwirq(struct irq_data *d)
  * @irq_get_irqchip_state:	return the internal state of an interrupt
  * @irq_set_irqchip_state:	set the internal state of a interrupt
  * @irq_set_vcpu_affinity:	optional to target a vCPU in a virtual machine
+ * @irq_get_msi_doorbell_info:	return the MSI doorbell info
  * @ipi_send_single:	send a single IPI to destination cpus
  * @ipi_send_mask:	send an IPI to destination cpus in cpumask
  * @flags:		chip specific flags
@@ -394,7 +415,7 @@ struct irq_chip {
 	int		(*irq_set_irqchip_state)(struct irq_data *data, enum irqchip_irq_state which, bool state);
 
 	int		(*irq_set_vcpu_affinity)(struct irq_data *data, void *vcpu_info);
-
+	struct msi_doorbell_info *(*irq_get_msi_doorbell_info)(struct irq_data *data);
 	void		(*ipi_send_single)(struct irq_data *data, unsigned int cpu);
 	void		(*ipi_send_mask)(struct irq_data *data, const struct cpumask *dest);
 
