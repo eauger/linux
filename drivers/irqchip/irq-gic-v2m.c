@@ -70,6 +70,7 @@ struct v2m_data {
 	u32 spi_offset;		/* offset to be subtracted from SPI number */
 	unsigned long *bm;	/* MSI vector bitmap */
 	u32 flags;		/* v2m flags for specific implementation */
+	struct iommu_msi_doorbell_info *doorbell_info; /* MSI doorbell */
 };
 
 static void gicv2m_mask_msi_irq(struct irq_data *d)
@@ -254,6 +255,7 @@ static void gicv2m_teardown(void)
 	struct v2m_data *v2m, *tmp;
 
 	list_for_each_entry_safe(v2m, tmp, &v2m_nodes, entry) {
+		iommu_msi_doorbell_free(v2m->doorbell_info);
 		list_del(&v2m->entry);
 		kfree(v2m->bm);
 		iounmap(v2m->base);
@@ -370,12 +372,18 @@ static int __init gicv2m_init_one(struct fwnode_handle *fwnode,
 		goto err_iounmap;
 	}
 
+	v2m->doorbell_info = iommu_msi_doorbell_alloc(v2m->res.start,
+						      sizeof(u32), false);
+	if (IS_ERR(v2m->doorbell_info))
+		goto err_free_bm;
+
 	list_add_tail(&v2m->entry, &v2m_nodes);
 
 	pr_info("range%pR, SPI[%d:%d]\n", res,
 		v2m->spi_start, (v2m->spi_start + v2m->nr_spis - 1));
 	return 0;
-
+err_free_bm:
+	kfree(v2m->bm);
 err_iounmap:
 	iounmap(v2m->base);
 err_free_v2m:
