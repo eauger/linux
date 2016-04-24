@@ -52,6 +52,35 @@ void iommu_put_msi_cookie(struct iommu_domain *domain);
 int iommu_msi_set_aperture(struct iommu_domain *domain,
 			   dma_addr_t start, dma_addr_t end);
 
+/**
+ * iommu_msi_get_doorbell_iova: allocate a contiguous set of iova pages and
+ * map them to the MSI doorbell's physical range defined by @addr and @size.
+ *
+ * @domain: iommu domain handle
+ * @addr: physical address to bind
+ * @size: size of the binding
+ * @prot: mapping protection attribute
+ * @iova: returned iova
+ *
+ * Mapped physical pfns are within [@addr >> order, (@addr + size -1) >> order]
+ * where order corresponds to the iova domain order.
+ * This mapping is tracked and reference counted with the minimal granularity
+ * of @size.
+ */
+int iommu_msi_get_doorbell_iova(struct iommu_domain *domain,
+				phys_addr_t addr, size_t size, int prot,
+				dma_addr_t *iova);
+
+/**
+ * iommu_msi_put_doorbell_iova: decrement a ref count of the doorbell's mapping
+ *
+ * @domain: iommu domain handle
+ * @addr: physical address whose binding ref count is decremented
+ *
+ * if the binding ref count is null, destroy the MSI doorbell's mapping
+ */
+void iommu_msi_put_doorbell_iova(struct iommu_domain *domain, phys_addr_t addr);
+
 #else
 
 static inline int
@@ -60,6 +89,16 @@ iommu_msi_set_aperture(struct iommu_domain *domain,
 {
 	return -ENOENT;
 }
+
+static inline int iommu_msi_get_doorbell_iova(struct iommu_domain *domain,
+					      phys_addr_t addr, size_t size,
+					      int prot, dma_addr_t *iova)
+{
+	return -ENOENT;
+}
+
+static inline void iommu_msi_put_doorbell_iova(struct iommu_domain *domain,
+					       phys_addr_t addr) {}
 
 #endif	/* CONFIG_IOMMU_MSI */
 #endif	/* __MSI_IOMMU_H */
