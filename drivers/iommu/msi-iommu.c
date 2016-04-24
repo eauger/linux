@@ -98,3 +98,153 @@ int iommu_msi_set_aperture(struct iommu_domain *domain,
 }
 EXPORT_SYMBOL_GPL(iommu_msi_set_aperture);
 
+/* called with info->lock held */
+static struct doorbell_mapping *
+search_msi_doorbell_mapping(struct doorbell_mapping_info *info,
+			    phys_addr_t addr, size_t size)
+{
+	struct doorbell_mapping *mapping;
+
+	list_for_each_entry(mapping, &info->list, next) {
+		if ((addr >= mapping->addr) &&
+		    (addr + size <= mapping->addr + mapping->size))
+			return mapping;
+	}
+	return NULL;
+}
+
+int iommu_msi_get_doorbell_iova(struct iommu_domain *domain,
+				phys_addr_t addr, size_t size, int prot,
+				dma_addr_t *iova)
+{
+	struct doorbell_mapping_info *dmi = domain->msi_cookie;
+	struct iova_domain *iovad = domain->iova_cookie;
+	struct doorbell_mapping *new_mapping, *mapping;
+	phys_addr_t aligned_base, offset;
+	size_t binding_size;
+	struct iova *p_iova;
+	dma_addr_t new_iova;
+	int ret = -EINVAL;
+	bool unmap = false;
+
+	if (!dmi)
+		return -ENODEV;
+
+	if (!iommu_domain_msi_aperture_valid(domain))
+		return -EINVAL;
+
+	offset = iova_offset(iovad, addr);
+	aligned_base = addr - offset;
+	binding_size = iova_align(iovad, size + offset);
+
+	spin_lock(&dmi->lock);
+
+	mapping = search_msi_doorbell_mapping(dmi, aligned_base, binding_size);
+	if (mapping) {
+		*iova = mapping->iova + offset + aligned_base - mapping->addr;
+		kref_get(&mapping->kref);
+		ret = 0;
+		goto unlock;
+	}
+
+	spin_unlock(&dmi->lock);
+
+	new_mapping = kzalloc(sizeof(*new_mapping), GFP_KERNEL);
+	if (!new_mapping)
+		return -ENOMEM;
+
+	p_iova = alloc_iova(iovad, binding_size >> iova_shift(iovad),
+			    iovad->dma_32bit_pfn, true);
+	if (!p_iova) {
+		kfree(new_mapping);
+		return -ENOMEM;
+	}
+
+	new_iova = iova_dma_addr(iovad, p_iova);
+	*iova = new_iova;
+
+	/* iommu_map is not supposed to be atomic */
+	ret = iommu_map(domain, *iova, aligned_base, binding_size, prot);
+
+	spin_lock(&dmi->lock);
+
+	if (ret)
+		goto free_iova;
+	/*
+	 * check again the doorbell mapping was not added while the lock
+	 * was released
+	 */
+	mapping = search_msi_doorbell_mapping(dmi, aligned_base, binding_size);
+	if (mapping) {
+		*iova = mapping->iova + offset + aligned_base - mapping->addr;
+		kref_get(&mapping->kref);
+		ret = 0;
+		unmap = true;
+		goto free_iova;
+	}
+
+	kref_init(&new_mapping->kref);
+	new_mapping->addr = aligned_base;
+	new_mapping->iova = *iova;
+	new_mapping->size = binding_size;
+
+	list_add(&new_mapping->next, &dmi->list);
+
+	*iova += offset;
+	goto unlock;
+free_iova:
+	free_iova(iovad, p_iova->pfn_lo);
+	kfree(new_mapping);
+unlock:
+	spin_unlock(&dmi->lock);
+	if (unmap)
+		iommu_unmap(domain, new_iova, binding_size);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(iommu_msi_get_doorbell_iova);
+
+static void doorbell_mapping_release(struct kref *kref)
+{
+	struct doorbell_mapping *mapping =
+		container_of(kref, struct doorbell_mapping, kref);
+
+	list_del(&mapping->next);
+	kfree(mapping);
+}
+
+void iommu_msi_put_doorbell_iova(struct iommu_domain *domain, phys_addr_t addr)
+{
+	struct doorbell_mapping_info *dmi = domain->msi_cookie;
+	struct iova_domain *iovad = domain->iova_cookie;
+	phys_addr_t aligned_addr, page_size, offset;
+	struct doorbell_mapping *mapping;
+	dma_addr_t iova;
+	size_t size;
+	int ret = 0;
+
+	if (!dmi)
+		return;
+
+	page_size = (uint64_t)1 << iova_shift(iovad);
+	offset = iova_offset(iovad, addr);
+	aligned_addr = addr - offset;
+
+	spin_lock(&dmi->lock);
+
+	mapping = search_msi_doorbell_mapping(dmi, aligned_addr, page_size);
+	if (!mapping)
+		goto unlock;
+
+	iova = mapping->iova;
+	size = mapping->size;
+
+	ret = kref_put(&mapping->kref, doorbell_mapping_release);
+
+unlock:
+	spin_unlock(&dmi->lock);
+	if (ret) {
+		iommu_unmap(domain, iova, size);
+		free_iova(iovad, iova_pfn(iovad, iova));
+	}
+}
+EXPORT_SYMBOL_GPL(iommu_msi_put_doorbell_iova);
