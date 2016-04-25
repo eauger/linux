@@ -248,3 +248,20 @@ unlock:
 	}
 }
 EXPORT_SYMBOL_GPL(iommu_msi_put_doorbell_iova);
+
+struct iommu_domain *iommu_msi_domain(struct device *dev)
+{
+	struct iommu_domain *d = iommu_get_domain_for_dev(dev);
+	struct iommu_domain_msi_geometry msi_geometry;
+
+	if (!d || (d->type == IOMMU_DOMAIN_DMA))
+		return NULL;
+
+	iommu_domain_get_attr(d, DOMAIN_ATTR_MSI_GEOMETRY, &msi_geometry);
+	if (!msi_geometry.iommu_msi_supported)
+		return NULL;
+
+	return d;
+}
+EXPORT_SYMBOL_GPL(iommu_msi_domain);
+
