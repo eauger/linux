@@ -81,6 +81,15 @@ int iommu_msi_get_doorbell_iova(struct iommu_domain *domain,
  */
 void iommu_msi_put_doorbell_iova(struct iommu_domain *domain, phys_addr_t addr);
 
+/**
+ * iommu_msi_domain: in case the device is upstream to an IOMMU and this IOMMU
+ * translates the MSI transaction, returns the iommu domain the MSI doorbell
+ * address must be mapped in; else returns NULL.
+ *
+ * @dev: device handle
+ */
+struct iommu_domain *iommu_msi_domain(struct device *dev);
+
 #else
 
 static inline int
@@ -99,6 +108,11 @@ static inline int iommu_msi_get_doorbell_iova(struct iommu_domain *domain,
 
 static inline void iommu_msi_put_doorbell_iova(struct iommu_domain *domain,
 					       phys_addr_t addr) {}
+
+static inline struct iommu_domain *iommu_msi_domain(struct device *dev)
+{
+	return NULL;
+}
 
 #endif	/* CONFIG_IOMMU_MSI */
 #endif	/* __MSI_IOMMU_H */
