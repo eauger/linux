@@ -30,6 +30,7 @@
 
 #include <linux/delay.h>
 #include <linux/dma-iommu.h>
+#include <linux/msi-iommu.h>
 #include <linux/dma-mapping.h>
 #include <linux/err.h>
 #include <linux/interrupt.h>
@@ -990,10 +991,12 @@ static struct iommu_domain *arm_smmu_domain_alloc(unsigned type)
 		return NULL;
 
 	if (type == IOMMU_DOMAIN_DMA &&
-	    iommu_get_dma_cookie(&smmu_domain->domain)) {
-		kfree(smmu_domain);
-		return NULL;
-	}
+	    iommu_get_dma_cookie(&smmu_domain->domain))
+		goto err;
+
+	if (type == IOMMU_DOMAIN_UNMANAGED &&
+		iommu_get_msi_cookie(&smmu_domain->domain))
+		goto err;
 
 	smmu_domain->domain.msi_geometry = msi_geometry;
 
@@ -1001,6 +1004,9 @@ static struct iommu_domain *arm_smmu_domain_alloc(unsigned type)
 	spin_lock_init(&smmu_domain->pgtbl_lock);
 
 	return &smmu_domain->domain;
+err:
+	kfree(smmu_domain);
+	return NULL;
 }
 
 static void arm_smmu_domain_free(struct iommu_domain *domain)
@@ -1011,6 +1017,7 @@ static void arm_smmu_domain_free(struct iommu_domain *domain)
 	 * Free the domain resources. We assume that all devices have
 	 * already been detached.
 	 */
+	iommu_put_msi_cookie(domain);
 	iommu_put_dma_cookie(domain);
 	arm_smmu_destroy_domain_context(domain);
 	kfree(smmu_domain);
