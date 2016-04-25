@@ -19,6 +19,7 @@
 #include <linux/kernel.h>
 
 struct iommu_domain;
+struct msi_msg;
 
 #ifdef CONFIG_IOMMU_MSI
 
@@ -90,6 +91,25 @@ void iommu_msi_put_doorbell_iova(struct iommu_domain *domain, phys_addr_t addr);
  */
 struct iommu_domain *iommu_msi_domain(struct device *dev);
 
+/**
+ * iommu_msi_msg_pa_to_va: in case a device's MSI transaction is translated
+ * by an IOMMU, the msg address must be an IOVA instead of a physical address.
+ * This function overwrites the original MSI message containing the doorbell's
+ * physical address with the doorbell's pre-allocated IOVA, if any.
+ *
+ * The doorbell physical address must be bound previously to an IOVA using
+ * iommu_msi_get_doorbell_iova
+ *
+ * @dev: device emitting the MSI
+ * @msg: original MSI message containing the PA to be overwritten with the IOVA
+ *
+ * return 0 if the MSI does not need to be mapped or when the PA/IOVA
+ * were successfully swapped; return -EINVAL if the addresses need
+ * to be swapped but not IOMMU binding is found
+ */
+int iommu_msi_msg_pa_to_va(struct device *dev, struct msi_msg *msg);
+
+
 #else
 
 static inline int
@@ -112,6 +132,12 @@ static inline void iommu_msi_put_doorbell_iova(struct iommu_domain *domain,
 static inline struct iommu_domain *iommu_msi_domain(struct device *dev)
 {
 	return NULL;
+}
+
+static inline int iommu_msi_msg_pa_to_va(struct device *dev,
+					 struct msi_msg *msg)
+{
+	return 0;
 }
 
 #endif	/* CONFIG_IOMMU_MSI */
