@@ -20,6 +20,14 @@
 #include <linux/msi-iommu.h>
 #include <linux/spinlock.h>
 #include <linux/iova.h>
+#include <linux/msi.h>
+
+#ifdef CONFIG_PHYS_ADDR_T_64BIT
+#define msg_to_phys_addr(msg) \
+	(((phys_addr_t)((msg)->address_hi) << 32) | (msg)->address_lo)
+#else
+#define msg_to_phys_addr(msg)	((msg)->address_lo)
+#endif
 
 struct doorbell_mapping {
 	struct kref		kref;
@@ -264,4 +272,51 @@ struct iommu_domain *iommu_msi_domain(struct device *dev)
 	return d;
 }
 EXPORT_SYMBOL_GPL(iommu_msi_domain);
+
+static dma_addr_t iommu_msi_find_iova(struct iommu_domain *domain,
+				      phys_addr_t addr, size_t size)
+{
+	struct doorbell_mapping_info *dmi = domain->msi_cookie;
+	struct iova_domain *iovad = domain->iova_cookie;
+	struct doorbell_mapping *mapping;
+	dma_addr_t iova = DMA_ERROR_CODE;
+	phys_addr_t aligned_base, offset;
+	size_t binding_size;
+
+	if (!iovad || !dmi)
+		return iova;
+
+	offset = iova_offset(iovad, addr);
+	aligned_base = addr - offset;
+	binding_size = iova_align(iovad, size + offset);
+
+	spin_lock(&dmi->lock);
+
+	mapping = search_msi_doorbell_mapping(dmi, addr, size);
+	if (mapping)
+		iova = mapping->iova + offset + aligned_base - mapping->addr;
+
+	spin_unlock(&dmi->lock);
+	return iova;
+}
+
+int iommu_msi_msg_pa_to_va(struct device *dev, struct msi_msg *msg)
+{
+	struct iommu_domain *d = iommu_msi_domain(dev);
+	dma_addr_t iova;
+
+	if (!d)
+		return 0;
+
+	iova = iommu_msi_find_iova(d, msg_to_phys_addr(msg),
+				   sizeof(phys_addr_t));
+
+	if (iova == DMA_ERROR_CODE)
+		return -EINVAL;
+
+	msg->address_lo = lower_32_bits(iova);
+	msg->address_hi = upper_32_bits(iova);
+	return 0;
+}
+EXPORT_SYMBOL_GPL(iommu_msi_msg_pa_to_va);
 
