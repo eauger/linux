@@ -86,6 +86,7 @@ struct its_node {
 	u32			ite_size;
 	u32			device_ids;
 	int			numa_node;
+	struct iommu_msi_doorbell_info	*doorbell_info;
 };
 
 #define ITS_ITT_ALIGN		SZ_256
@@ -1717,6 +1718,7 @@ static int __init its_probe(struct device_node *node,
 
 	if (of_property_read_bool(node, "msi-controller")) {
 		struct msi_domain_info *info;
+		phys_addr_t translater;
 
 		info = kzalloc(sizeof(*info), GFP_KERNEL);
 		if (!info) {
@@ -1724,10 +1726,21 @@ static int __init its_probe(struct device_node *node,
 			goto out_free_tables;
 		}
 
+		translater = its->phys_base + GITS_TRANSLATER;
+		its->doorbell_info =
+			iommu_msi_doorbell_alloc(translater, sizeof(u32), true);
+
+		if (IS_ERR(its->doorbell_info))  {
+			kfree(info);
+			goto out_free_tables;
+		}
+
+
 		inner_domain = irq_domain_add_tree(node, &its_domain_ops, its);
 		if (!inner_domain) {
 			err = -ENOMEM;
 			kfree(info);
+			iommu_msi_doorbell_free(its->doorbell_info);
 			goto out_free_tables;
 		}
 
