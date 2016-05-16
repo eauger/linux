@@ -29,6 +29,8 @@
 #include <linux/of_platform.h>
 #include <linux/percpu.h>
 #include <linux/slab.h>
+#include <linux/iommu.h>
+#include <linux/msi-doorbell.h>
 
 #include <linux/irqchip.h>
 #include <linux/irqchip/arm-gic-v3.h>
@@ -71,19 +73,20 @@ struct its_baser {
  * list of devices writing to it.
  */
 struct its_node {
-	raw_spinlock_t		lock;
-	struct list_head	entry;
-	void __iomem		*base;
-	unsigned long		phys_base;
-	struct its_cmd_block	*cmd_base;
-	struct its_cmd_block	*cmd_write;
-	struct its_baser	tables[GITS_BASER_NR_REGS];
-	struct its_collection	*collections;
-	struct list_head	its_device_list;
-	u64			flags;
-	u32			ite_size;
-	u32			device_ids;
-	int			numa_node;
+	raw_spinlock_t			lock;
+	struct list_head		entry;
+	void __iomem			*base;
+	unsigned long			phys_base;
+	struct its_cmd_block		*cmd_base;
+	struct its_cmd_block		*cmd_write;
+	struct its_baser		tables[GITS_BASER_NR_REGS];
+	struct its_collection		*collections;
+	struct list_head		its_device_list;
+	u64				flags;
+	u32				ite_size;
+	u32				device_ids;
+	int				numa_node;
+	struct msi_doorbell_info	*doorbell_info;
 };
 
 #define ITS_ITT_ALIGN		SZ_256
@@ -656,13 +659,24 @@ static void its_irq_compose_msi_msg(struct irq_data *d, struct msi_msg *msg)
 	msg->data		= its_get_event_id(d);
 }
 
+static struct msi_doorbell_info *
+its_irq_get_msi_doorbell_info(struct irq_data *d)
+{
+	struct its_device *its_dev = irq_data_get_irq_chip_data(d);
+	struct its_node *its = its_dev->its;
+
+	return its->doorbell_info;
+}
+
+
 static struct irq_chip its_irq_chip = {
-	.name			= "ITS",
-	.irq_mask		= its_mask_irq,
-	.irq_unmask		= its_unmask_irq,
-	.irq_eoi		= irq_chip_eoi_parent,
-	.irq_set_affinity	= its_set_affinity,
-	.irq_compose_msi_msg	= its_irq_compose_msi_msg,
+	.name				= "ITS",
+	.irq_mask			= its_mask_irq,
+	.irq_unmask			= its_unmask_irq,
+	.irq_eoi			= irq_chip_eoi_parent,
+	.irq_set_affinity		= its_set_affinity,
+	.irq_compose_msi_msg		= its_irq_compose_msi_msg,
+	.irq_get_msi_doorbell_info	= its_irq_get_msi_doorbell_info,
 };
 
 /*
@@ -1607,6 +1621,7 @@ static int __init its_probe(struct device_node *node,
 
 	if (of_property_read_bool(node, "msi-controller")) {
 		struct msi_domain_info *info;
+		phys_addr_t translater;
 
 		info = kzalloc(sizeof(*info), GFP_KERNEL);
 		if (!info) {
@@ -1614,10 +1629,24 @@ static int __init its_probe(struct device_node *node,
 			goto out_free_tables;
 		}
 
+		translater = its->phys_base + GITS_TRANSLATER;
+		its->doorbell_info =
+			msi_doorbell_register_global(translater, sizeof(u32),
+						     IOMMU_WRITE | IOMMU_MMIO,
+						     true);
+
+		if (!its->doorbell_info)  {
+			err = -ENOMEM;
+			kfree(info);
+			goto out_free_tables;
+		}
+
+
 		inner_domain = irq_domain_add_tree(node, &its_domain_ops, its);
 		if (!inner_domain) {
 			err = -ENOMEM;
 			kfree(info);
+			msi_doorbell_unregister_global(its->doorbell_info);
 			goto out_free_tables;
 		}
 
