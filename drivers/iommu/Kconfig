@@ -78,6 +78,7 @@ config IOMMU_DMA
 config IOMMU_MSI
 	bool
 	select IOMMU_DMA
+	select MSI_DOORBELL
 
 config FSL_PAMU
 	bool "Freescale IOMMU support"

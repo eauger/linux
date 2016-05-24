@@ -72,6 +72,10 @@ config GENERIC_IRQ_IPI
 config GENERIC_MSI_IRQ
 	bool
 
+# MSI doorbell support (for doorbell IOMMU mapping)
+config MSI_DOORBELL
+	bool
+
 # Generic MSI hierarchical interrupt domain support
 config GENERIC_MSI_IRQ_DOMAIN
 	bool
