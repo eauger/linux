@@ -57,6 +57,14 @@ void msi_doorbell_unregister(void *chip_data);
 struct irq_chip_msi_doorbell_info *
 msi_doorbell_lookup(void *chip_data);
 
+/**
+ * msi_doorbell_pages: compute the number of iommu pages of size 1 << order
+ * requested to map all the registered doorbells
+ *
+ * @order: iommu page order
+ */
+int msi_doorbell_pages(unsigned int order);
+
 #else
 
 static inline int
@@ -72,6 +80,12 @@ static inline struct irq_chip_msi_doorbell_info *
 msi_doorbell_lookup(void *chip_data)
 {
 	return NULL;
+}
+
+static inline int
+msi_doorbell_pages(unsigned int order)
+{
+	return 0;
 }
 
 #endif /* CONFIG_MSI_DOORBELL */
