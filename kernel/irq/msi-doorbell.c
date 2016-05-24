@@ -130,3 +130,9 @@ int msi_doorbell_calc_pages(unsigned int order)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(msi_doorbell_calc_pages);
+
+bool msi_doorbell_safe(void)
+{
+	return !nb_unsafe_doorbells;
+}
+EXPORT_SYMBOL_GPL(msi_doorbell_safe);

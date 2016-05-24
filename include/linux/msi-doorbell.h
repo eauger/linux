@@ -47,6 +47,14 @@ void msi_doorbell_unregister_global(struct msi_doorbell_info *db);
  */
 int msi_doorbell_calc_pages(unsigned int order);
 
+/**
+ * msi_doorbell_safe - return whether all registered doorbells are safe
+ *
+ * Safe doorbells are those which implement irq remapping
+ * Return: true if all doorbells are safe, false otherwise
+ */
+bool msi_doorbell_safe(void);
+
 #else
 
 static inline struct msi_doorbell_info *
@@ -64,6 +72,11 @@ static inline int msi_doorbell_calc_pages(unsigned int order)
 	return 0;
 }
 
+static inline bool
+msi_doorbell_safe(void)
+{
+	return true;
+}
 #endif /* CONFIG_MSI_DOORBELL */
 
 #endif
