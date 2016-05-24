@@ -54,6 +54,15 @@ void msi_doorbell_unregister_global(struct msi_doorbell_info *db);
  */
 bool msi_doorbell_safe(void);
 
+/**
+ * msi_doorbell_calc_pages - compute the number of pages
+ * requested to map all the registered doorbells
+ * @order: iommu page order
+ *
+ * Return: the number of requested pages
+ */
+int msi_doorbell_calc_pages(unsigned int order);
+
 #else
 
 static inline int
@@ -72,6 +81,12 @@ static inline bool msi_doorbell_safe(void)
 {
 	return true;
 }
+
+static inline int msi_doorbell_calc_pages(unsigned int order)
+{
+	return 0;
+}
+
 #endif /* CONFIG_MSI_DOORBELL */
 
 #endif
