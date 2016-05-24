@@ -112,3 +112,18 @@ int msi_doorbell_pages(unsigned int order)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(msi_doorbell_pages);
+
+bool msi_doorbell_safe(void)
+{
+	struct irqchip_doorbell *db;
+	bool irq_remapping = true;
+
+	mutex_lock(&irqchip_doorbell_mutex);
+	list_for_each_entry(db, &irqchip_doorbell_list, next) {
+		irq_remapping &= db->info.irq_remapping;
+	}
+	mutex_unlock(&irqchip_doorbell_mutex);
+
+	return irq_remapping;
+}
+EXPORT_SYMBOL_GPL(msi_doorbell_safe);
