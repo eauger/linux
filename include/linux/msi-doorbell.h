@@ -35,6 +35,14 @@ msi_doorbell_register_global(phys_addr_t base, size_t size,
  */
 void msi_doorbell_unregister_global(struct irq_chip_msi_doorbell_info *db);
 
+/**
+ * msi_doorbell_pages: compute the number of iommu pages of size 1 << order
+ * requested to map all the registered doorbells
+ *
+ * @order: iommu page order
+ */
+int msi_doorbell_pages(unsigned int order);
+
 #else
 
 static inline struct irq_chip_msi_doorbell_info *
@@ -46,6 +54,12 @@ msi_doorbell_register_global(phys_addr_t base, size_t size,
 
 static inline void
 msi_doorbell_unregister_global(struct irq_chip_msi_doorbell_info *db) {}
+
+static inline int
+msi_doorbell_pages(unsigned int order)
+{
+	return 0;
+}
 
 #endif /* CONFIG_MSI_DOORBELL */
 

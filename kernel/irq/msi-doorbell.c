@@ -60,3 +60,55 @@ void msi_doorbell_unregister_global(struct irq_chip_msi_doorbell_info *dbinfo)
 	mutex_unlock(&irqchip_doorbell_mutex);
 }
 EXPORT_SYMBOL_GPL(msi_doorbell_unregister_global);
+
+static int compute_db_mapping_requirements(phys_addr_t addr, size_t size,
+					   unsigned int order)
+{
+	phys_addr_t offset, granule;
+	unsigned int nb_pages;
+
+	granule = (uint64_t)(1 << order);
+	offset = addr & (granule - 1);
+	size = ALIGN(size + offset, granule);
+	nb_pages = size >> order;
+
+	return nb_pages;
+}
+
+static int
+compute_dbinfo_mapping_requirements(struct irq_chip_msi_doorbell_info *dbinfo,
+				    unsigned int order)
+{
+	int ret = 0;
+
+	if (!dbinfo->doorbell_is_percpu) {
+		ret = compute_db_mapping_requirements(dbinfo->global_doorbell,
+						      dbinfo->size, order);
+	} else {
+		phys_addr_t __percpu *pbase;
+		int cpu;
+
+		for_each_possible_cpu(cpu) {
+			pbase = per_cpu_ptr(dbinfo->percpu_doorbells, cpu);
+			ret += compute_db_mapping_requirements(*pbase,
+							       dbinfo->size,
+							       order);
+		}
+	}
+	return ret;
+}
+
+int msi_doorbell_pages(unsigned int order)
+{
+	struct irqchip_doorbell *db;
+	int ret = 0;
+
+	mutex_lock(&irqchip_doorbell_mutex);
+	list_for_each_entry(db, &irqchip_doorbell_list, next) {
+		ret += compute_dbinfo_mapping_requirements(&db->info, order);
+	}
+	mutex_unlock(&irqchip_doorbell_mutex);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(msi_doorbell_pages);
