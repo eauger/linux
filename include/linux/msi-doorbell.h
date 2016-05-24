@@ -65,6 +65,13 @@ msi_doorbell_lookup(void *chip_data);
  */
 int msi_doorbell_pages(unsigned int order);
 
+/**
+ * msi_doorbell_safe: return whether all registered doorbells
+ * do implement irq_remapping and are safe to assign (coarse safety
+ * assessment)
+ */
+bool msi_doorbell_safe(void);
+
 #else
 
 static inline int
@@ -88,6 +95,11 @@ msi_doorbell_pages(unsigned int order)
 	return 0;
 }
 
+static inline bool
+msi_doorbell_safe(void)
+{
+	return true;
+}
 #endif /* CONFIG_MSI_DOORBELL */
 
 #endif
