@@ -42,6 +42,9 @@ void vgic_put_irq(struct kvm *kvm, struct vgic_irq *irq);
 bool vgic_queue_irq_unlock(struct kvm *kvm, struct vgic_irq *irq);
 void vgic_kick_vcpus(struct kvm *kvm);
 
+int vgic_check_ioaddr(struct kvm *kvm, phys_addr_t *ioaddr,
+		      phys_addr_t addr, phys_addr_t alignment);
+
 void vgic_v2_process_maintenance(struct kvm_vcpu *vcpu);
 void vgic_v2_fold_lr_state(struct kvm_vcpu *vcpu);
 void vgic_v2_populate_lr(struct kvm_vcpu *vcpu, struct vgic_irq *irq, int lr);
@@ -73,6 +76,7 @@ int vgic_v3_probe(const struct gic_kvm_info *info);
 int vgic_v3_map_resources(struct kvm *kvm);
 int vgic_register_redist_iodevs(struct kvm *kvm, gpa_t dist_base_address);
 bool vgic_has_its(struct kvm *kvm);
+int kvm_vgic_register_its_device(void);
 #else
 static inline void vgic_v3_process_maintenance(struct kvm_vcpu *vcpu)
 {
@@ -130,6 +134,10 @@ static inline bool vgic_has_its(struct kvm *kvm)
 	return false;
 }
 
+static inline int kvm_vgic_register_its_device(void)
+{
+	return -ENODEV;
+}
 #endif
 
 int kvm_register_vgic_device(unsigned long type);

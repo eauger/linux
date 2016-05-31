@@ -21,8 +21,8 @@
 
 /* common helpers */
 
-static int vgic_check_ioaddr(struct kvm *kvm, phys_addr_t *ioaddr,
-			     phys_addr_t addr, phys_addr_t alignment)
+int vgic_check_ioaddr(struct kvm *kvm, phys_addr_t *ioaddr,
+		      phys_addr_t addr, phys_addr_t alignment)
 {
 	if (addr & ~KVM_PHYS_MASK)
 		return -E2BIG;
@@ -223,6 +223,9 @@ int kvm_register_vgic_device(unsigned long type)
 	case KVM_DEV_TYPE_ARM_VGIC_V3:
 		ret = kvm_register_device_ops(&kvm_arm_vgic_v3_ops,
 					      KVM_DEV_TYPE_ARM_VGIC_V3);
+		if (ret)
+			break;
+		ret = kvm_vgic_register_its_device();
 		break;
 #endif
 	}

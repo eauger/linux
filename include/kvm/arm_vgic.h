@@ -126,6 +126,7 @@ struct vgic_its {
 	gpa_t			vgic_its_base;
 
 	bool			enabled;
+	bool			initialized;
 	struct vgic_io_device	iodev;
 };
 
@@ -158,6 +159,8 @@ struct vgic_dist {
 	struct vgic_irq		*spis;
 
 	struct vgic_io_device	dist_iodev;
+
+	bool			has_its;
 
 	/*
 	 * Contains the address of the LPI configuration table.
