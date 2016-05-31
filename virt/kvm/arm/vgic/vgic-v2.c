@@ -344,7 +344,12 @@ int vgic_v2_probe(const struct gic_kvm_info *info)
 	}
 
 	kvm_vgic_global_state.can_emulate_gicv2 = true;
-	kvm_register_vgic_device(KVM_DEV_TYPE_ARM_VGIC_V2);
+	ret = kvm_register_vgic_device(KVM_DEV_TYPE_ARM_VGIC_V2);
+	if (ret) {
+		kvm_err("Cannot register GICv2 KVM device\n");
+		iounmap(kvm_vgic_global_state.vctrl_base);
+		return ret;
+	}
 
 	kvm_vgic_global_state.vcpu_base = info->vcpu.start;
 	kvm_vgic_global_state.type = VGIC_V2;
