@@ -159,6 +159,7 @@ struct vgic_dist {
 
 	struct vgic_io_device	dist_iodev;
 
+	bool			has_its;
 	/*
 	 * Contains the address of the LPI configuration table.
 	 * Since we report GICR_TYPER.CommonLPIAff as 0b00, we can share
