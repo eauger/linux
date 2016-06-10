@@ -56,6 +56,8 @@ unsigned long vgic_mmio_read_enable(struct kvm_vcpu *vcpu,
 
 		if (irq->enabled)
 			value |= (1U << i);
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 
 	return value;
@@ -74,6 +76,8 @@ void vgic_mmio_write_senable(struct kvm_vcpu *vcpu,
 		spin_lock(&irq->irq_lock);
 		irq->enabled = true;
 		vgic_queue_irq_unlock(vcpu->kvm, irq);
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 }
 
@@ -92,6 +96,7 @@ void vgic_mmio_write_cenable(struct kvm_vcpu *vcpu,
 		irq->enabled = false;
 
 		spin_unlock(&irq->irq_lock);
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 }
 
@@ -108,6 +113,8 @@ unsigned long vgic_mmio_read_pending(struct kvm_vcpu *vcpu,
 
 		if (irq->pending)
 			value |= (1U << i);
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 
 	return value;
@@ -129,6 +136,7 @@ void vgic_mmio_write_spending(struct kvm_vcpu *vcpu,
 			irq->soft_pending = true;
 
 		vgic_queue_irq_unlock(vcpu->kvm, irq);
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 }
 
@@ -152,6 +160,7 @@ void vgic_mmio_write_cpending(struct kvm_vcpu *vcpu,
 		}
 
 		spin_unlock(&irq->irq_lock);
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 }
 
@@ -168,6 +177,8 @@ unsigned long vgic_mmio_read_active(struct kvm_vcpu *vcpu,
 
 		if (irq->active)
 			value |= (1U << i);
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 
 	return value;
@@ -190,6 +201,7 @@ static void vgic_mmio_change_active(struct kvm_vcpu *vcpu, struct vgic_irq *irq,
 	 * IRQ, so we release and re-acquire the spin_lock to let the
 	 * other thread sync back the IRQ.
 	 */
+
 	while (irq->vcpu && /* IRQ may have state in an LR somewhere */
 	       irq->vcpu->cpu != -1) /* VCPU thread is running */
 		cond_resched_lock(&irq->irq_lock);
@@ -242,6 +254,7 @@ void vgic_mmio_write_cactive(struct kvm_vcpu *vcpu,
 	for_each_set_bit(i, &val, len * 8) {
 		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
 		vgic_mmio_change_active(vcpu, irq, false);
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 	vgic_change_active_finish(vcpu, intid);
 }
@@ -257,6 +270,7 @@ void vgic_mmio_write_sactive(struct kvm_vcpu *vcpu,
 	for_each_set_bit(i, &val, len * 8) {
 		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
 		vgic_mmio_change_active(vcpu, irq, true);
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 	vgic_change_active_finish(vcpu, intid);
 }
@@ -272,6 +286,8 @@ unsigned long vgic_mmio_read_priority(struct kvm_vcpu *vcpu,
 		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
 
 		val |= (u64)irq->priority << (i * 8);
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 
 	return val;
@@ -298,6 +314,8 @@ void vgic_mmio_write_priority(struct kvm_vcpu *vcpu,
 		/* Narrow the priority range to what we actually support */
 		irq->priority = (val >> (i * 8)) & GENMASK(7, 8 - VGIC_PRI_BITS);
 		spin_unlock(&irq->irq_lock);
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 }
 
@@ -313,6 +331,8 @@ unsigned long vgic_mmio_read_config(struct kvm_vcpu *vcpu,
 
 		if (irq->config == VGIC_CONFIG_EDGE)
 			value |= (2U << (i * 2));
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 
 	return value;
@@ -345,6 +365,8 @@ void vgic_mmio_write_config(struct kvm_vcpu *vcpu,
 			irq->pending = irq->line_level | irq->soft_pending;
 		}
 		spin_unlock(&irq->irq_lock);
+
+		vgic_put_irq(vcpu->kvm, irq);
 	}
 }
 

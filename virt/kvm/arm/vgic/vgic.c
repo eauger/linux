@@ -48,13 +48,20 @@ struct vgic_global __section(.hyp.text) kvm_vgic_global_state;
 struct vgic_irq *vgic_get_irq(struct kvm *kvm, struct kvm_vcpu *vcpu,
 			      u32 intid)
 {
-	/* SGIs and PPIs */
-	if (intid <= VGIC_MAX_PRIVATE)
-		return &vcpu->arch.vgic_cpu.private_irqs[intid];
+	struct vgic_dist *dist = &kvm->arch.vgic;
+	struct vgic_irq *irq;
 
-	/* SPIs */
-	if (intid <= VGIC_MAX_SPI)
-		return &kvm->arch.vgic.spis[intid - VGIC_NR_PRIVATE_IRQS];
+	if (intid <= VGIC_MAX_PRIVATE) {        /* SGIs and PPIs */
+		irq = &vcpu->arch.vgic_cpu.private_irqs[intid];
+		kref_get(&irq->refcount);
+		return irq;
+	}
+
+	if (intid <= VGIC_MAX_SPI) {            /* SPIs */
+		irq = &dist->spis[intid - VGIC_NR_PRIVATE_IRQS];
+		kref_get(&irq->refcount);
+		return irq;
+	}
 
 	/* LPIs are not yet covered */
 	if (intid >= VGIC_MIN_LPI)
@@ -62,6 +69,17 @@ struct vgic_irq *vgic_get_irq(struct kvm *kvm, struct kvm_vcpu *vcpu,
 
 	WARN(1, "Looking up struct vgic_irq for reserved INTID");
 	return NULL;
+}
+
+/* The refcount should never drop to 0 at the moment. */
+static void vgic_irq_release(struct kref *ref)
+{
+	WARN_ON(1);
+}
+
+void vgic_put_irq(struct kvm *kvm, struct vgic_irq *irq)
+{
+	kref_put(&irq->refcount, vgic_irq_release);
 }
 
 /**
@@ -236,6 +254,7 @@ retry:
 		goto retry;
 	}
 
+	kref_get(&irq->refcount);
 	list_add_tail(&irq->ap_list, &vcpu->arch.vgic_cpu.ap_list_head);
 	irq->vcpu = vcpu;
 
@@ -269,14 +288,17 @@ static int vgic_update_irq_pending(struct kvm *kvm, int cpuid,
 	if (!irq)
 		return -EINVAL;
 
-	if (irq->hw != mapped_irq)
+	if (irq->hw != mapped_irq) {
+		vgic_put_irq(kvm, irq);
 		return -EINVAL;
+	}
 
 	spin_lock(&irq->irq_lock);
 
 	if (!vgic_validate_injection(irq, level)) {
 		/* Nothing to see here, move along... */
 		spin_unlock(&irq->irq_lock);
+		vgic_put_irq(kvm, irq);
 		return 0;
 	}
 
@@ -288,6 +310,7 @@ static int vgic_update_irq_pending(struct kvm *kvm, int cpuid,
 	}
 
 	vgic_queue_irq_unlock(kvm, irq);
+	vgic_put_irq(kvm, irq);
 
 	return 0;
 }
@@ -330,6 +353,7 @@ int kvm_vgic_map_phys_irq(struct kvm_vcpu *vcpu, u32 virt_irq, u32 phys_irq)
 	irq->hwintid = phys_irq;
 
 	spin_unlock(&irq->irq_lock);
+	vgic_put_irq(vcpu->kvm, irq);
 
 	return 0;
 }
@@ -349,6 +373,7 @@ int kvm_vgic_unmap_phys_irq(struct kvm_vcpu *vcpu, unsigned int virt_irq)
 	irq->hwintid = 0;
 
 	spin_unlock(&irq->irq_lock);
+	vgic_put_irq(vcpu->kvm, irq);
 
 	return 0;
 }
@@ -386,6 +411,7 @@ retry:
 			list_del(&irq->ap_list);
 			irq->vcpu = NULL;
 			spin_unlock(&irq->irq_lock);
+			vgic_put_irq(vcpu->kvm, irq);
 			continue;
 		}
 
@@ -614,6 +640,7 @@ bool kvm_vgic_map_is_active(struct kvm_vcpu *vcpu, unsigned int virt_irq)
 	spin_lock(&irq->irq_lock);
 	map_is_active = irq->hw && irq->active;
 	spin_unlock(&irq->irq_lock);
+	vgic_put_irq(vcpu->kvm, irq);
 
 	return map_is_active;
 }
