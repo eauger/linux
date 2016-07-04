@@ -211,7 +211,7 @@ int kvm_set_irq_routing(struct kvm *kvm,
 			goto out;
 
 		r = -EINVAL;
-		if (ue->flags) {
+		if (ue->flags & ~KVM_MSI_VALID_DEVID) {
 			kfree(e);
 			goto out;
 		}
