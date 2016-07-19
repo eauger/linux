@@ -1021,10 +1021,14 @@ reset_info_exit:
 		ret = vfio_pci_for_each_slot_or_bus(vdev->pdev,
 						    vfio_pci_validate_devs,
 						    &info, slot);
+#if 0
 		if (!ret)
 			/* User has access, do the reset */
 			ret = slot ? pci_try_reset_slot(vdev->pdev->slot) :
 				     pci_try_reset_bus(vdev->pdev->bus);
+#else
+		ret = 0;
+#endif
 
 hot_reset_release:
 		for (i--; i >= 0; i--)
