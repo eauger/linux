@@ -47,6 +47,7 @@ struct fsl_mc_msi_desc {
  * @nvec_used:	The number of vectors used
  * @dev:	Pointer to the device which uses this descriptor
  * @msg:	The last set MSI message cached for reuse
+ * @flags:	flags to describe the MSI descriptor status or features
  *
  * @masked:	[PCI MSI/X] Mask bits
  * @is_msix:	[PCI MSI/X] True if MSI-X
@@ -67,6 +68,7 @@ struct msi_desc {
 	unsigned int			nvec_used;
 	struct device			*dev;
 	struct msi_msg			msg;
+	u32						flags;
 
 	union {
 		/* PCI MSI/X specific data */
@@ -97,6 +99,18 @@ struct msi_desc {
 		struct platform_msi_desc platform;
 		struct fsl_mc_msi_desc fsl_mc;
 	};
+};
+
+/* Flags for msi_desc */
+enum {
+	/* the base IRQ is allocated */
+	MSI_DESC_FLAG_ALLOCATED	=	(1 << 0),
+	/**
+	 * the MSI is functional; in some cases the fact the base IRQ is
+	 * allocated is not sufficient for the MSIs to be functional: for
+	 * example the MSI doorbell(s) may need to be IOMMU mapped.
+	 */
+	MSI_DESC_FLAG_FUNCTIONAL =	(1 << 1),
 };
 
 /* Helpers to hide struct msi_desc implementation details */

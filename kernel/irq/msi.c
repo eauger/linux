@@ -361,6 +361,9 @@ int msi_domain_alloc_irqs(struct irq_domain *domain, struct device *dev,
 			return ret;
 		}
 
+		desc->flags |= MSI_DESC_FLAG_ALLOCATED;
+		desc->flags |= MSI_DESC_FLAG_FUNCTIONAL;
+
 		for (i = 0; i < desc->nvec_used; i++)
 			irq_set_msi_desc_off(virq, i, desc);
 	}
@@ -395,9 +398,11 @@ void msi_domain_free_irqs(struct irq_domain *domain, struct device *dev)
 		 * enough that there is no IRQ associated to this
 		 * entry. If that's the case, don't do anything.
 		 */
-		if (desc->irq) {
+		if (desc->flags & MSI_DESC_FLAG_ALLOCATED) {
 			irq_domain_free_irqs(desc->irq, desc->nvec_used);
 			desc->irq = 0;
+			desc->flags &= ~MSI_DESC_FLAG_ALLOCATED;
+			desc->flags &= ~MSI_DESC_FLAG_FUNCTIONAL;
 		}
 	}
 }

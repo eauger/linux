@@ -793,7 +793,7 @@ out_avail:
 		int avail = 0;
 
 		for_each_pci_msi_entry(entry, dev) {
-			if (entry->irq != 0)
+			if (entry->flags & MSI_DESC_FLAG_FUNCTIONAL)
 				avail++;
 		}
 		if (avail != 0)
