@@ -67,6 +67,9 @@ int iommu_dma_mapping_error(struct device *dev, dma_addr_t dma_addr);
 /* The DMA API isn't _quite_ the whole story, though... */
 void iommu_dma_map_msi_msg(int irq, struct msi_msg *msg);
 
+int iommu_get_dma_msi_region_cookie(struct iommu_domain *domain,
+				    dma_addr_t base, u64 size);
+
 #else
 
 struct iommu_domain;
@@ -88,6 +91,12 @@ static inline void iommu_put_dma_cookie(struct iommu_domain *domain)
 
 static inline void iommu_dma_map_msi_msg(int irq, struct msi_msg *msg)
 {
+}
+
+static inline int iommu_get_dma_msi_region_cookie(struct iommu_domain *domain,
+						  dma_addr_t base, u64 size)
+{
+	return -ENODEV;
 }
 
 #endif	/* CONFIG_IOMMU_DMA */
