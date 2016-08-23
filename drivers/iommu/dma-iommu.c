@@ -716,3 +716,46 @@ void iommu_dma_map_msi_msg(int irq, struct msi_msg *msg)
 		msg->address_lo += lower_32_bits(msi_page->iova);
 	}
 }
+
+/**
+ * iommu_get_dma_msi_region_cookie - Configure a domain for MSI remapping only
+ * @domain: IOMMU domain to prepare
+ * @base: Base address of IOVA region to use as the MSI remapping aperture
+ * @size: Size of the desired MSI aperture
+ *
+ * Users who manage their own IOVA allocation and do not want DMA API support,
+ * but would still like to take advantage of automatic MSI remapping, can use
+ * this to initialise their own domain appropriately.
+ */
+int iommu_get_dma_msi_region_cookie(struct iommu_domain *domain,
+		dma_addr_t base, u64 size)
+{
+	struct iova_domain *iovad;
+	int ret;
+
+	if (domain->type != IOMMU_DOMAIN_MIXED)
+		return -EINVAL;
+
+	/* check the iova domain intersects the MSI window */
+	if (iommu_domain_msi_aperture_valid(domain) &&
+		(domain->msi_geometry.aperture_end < base ||
+		 domain->msi_geometry.aperture_start > base + size - 1))
+		return -EINVAL;
+
+	ret = iommu_get_dma_cookie(domain);
+	if (ret)
+		return ret;
+
+	ret = iommu_dma_init_domain(domain, base, size, NULL);
+	if (ret) {
+		iommu_put_dma_cookie(domain);
+		return ret;
+	}
+
+	iovad = cookie_iovad(domain);
+	if (base < U64_MAX - size)
+		reserve_iova(iovad, iova_pfn(iovad, base + size), ULONG_MAX);
+
+	return 0;
+}
+EXPORT_SYMBOL(iommu_get_dma_msi_region_cookie);
