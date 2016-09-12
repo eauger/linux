@@ -62,6 +62,9 @@ struct iommu_domain_msi_geometry {
 #define __IOMMU_DOMAIN_DMA_API	(1U << 1)  /* Domain for use in DMA-API
 					      implementation              */
 #define __IOMMU_DOMAIN_PT	(1U << 2)  /* Domain is identity mapped   */
+#define __IOMMU_DOMAIN_MIXED	(1U << 3)  /* Domain mixing unmanaged and
+					    * managed IOVAS
+					    */
 
 /*
  * This are the possible domain-types
@@ -71,6 +74,9 @@ struct iommu_domain_msi_geometry {
  *	IOMMU_DOMAIN_IDENTITY	- DMA addresses are system physical addresses
  *	IOMMU_DOMAIN_UNMANAGED	- DMA mappings managed by IOMMU-API user, used
  *				  for VMs
+ *	IOMMU_DOMAIN_MIXED	- Most DMA mappings are managed by IOMMU-API
+ *				  users and holes are left available for
+				  internal use such as MSI frame IOVA allocation
  *	IOMMU_DOMAIN_DMA	- Internally used for DMA-API implementations.
  *				  This flag allows IOMMU drivers to implement
  *				  certain optimizations for these domains
@@ -79,6 +85,9 @@ struct iommu_domain_msi_geometry {
 #define IOMMU_DOMAIN_IDENTITY	(__IOMMU_DOMAIN_PT)
 #define IOMMU_DOMAIN_UNMANAGED	(__IOMMU_DOMAIN_PAGING)
 #define IOMMU_DOMAIN_DMA	(__IOMMU_DOMAIN_PAGING |	\
+				 __IOMMU_DOMAIN_DMA_API)
+#define IOMMU_DOMAIN_MIXED	(__IOMMU_DOMAIN_MIXED |		\
+				 __IOMMU_DOMAIN_PAGING |	\
 				 __IOMMU_DOMAIN_DMA_API)
 
 struct iommu_domain {
