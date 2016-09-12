@@ -37,6 +37,7 @@
 #include <linux/vfio.h>
 #include <linux/workqueue.h>
 #include <linux/dma-iommu.h>
+#include <linux/iova.h>
 
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_AUTHOR   "Alex Williamson <alex.williamson@redhat.com>"
@@ -255,6 +256,32 @@ static int vaddr_get_pfn(unsigned long vaddr, int prot, unsigned long *pfn)
 	return ret;
 }
 
+static int iommu_dma_map(struct iommu_domain *domain, unsigned long iova,
+			 phys_addr_t paddr, size_t size, int prot)
+{
+	switch (domain->type) {
+	case IOMMU_DOMAIN_UNMANAGED:
+		return iommu_map(domain, iova, paddr, size, prot);
+	case IOMMU_DOMAIN_MIXED:
+		return iommu_dma_map_mixed(domain, iova, paddr, size, prot);
+	default:
+		return -ENOENT;
+	}
+}
+
+static size_t iommu_dma_unmap(struct iommu_domain *domain, unsigned long iova,
+			      size_t size)
+{
+	switch (domain->type) {
+	case IOMMU_DOMAIN_UNMANAGED:
+		return iommu_unmap(domain, iova, size);
+	case IOMMU_DOMAIN_MIXED:
+		return iommu_dma_unmap_mixed(domain, iova, size);
+	default:
+		return -ENOENT;
+	}
+}
+
 /*
  * Attempt to pin pages.  We really don't want to track all the pfns and
  * the iommu can only map chunks of consecutive pfns anyway, so get the
@@ -353,7 +380,7 @@ static void vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma)
 				      struct vfio_domain, next);
 
 	list_for_each_entry_continue(d, &iommu->domain_list, next) {
-		iommu_unmap(d->domain, dma->iova, dma->size);
+		iommu_dma_unmap(d->domain, dma->iova, dma->size);
 		cond_resched();
 	}
 
@@ -379,7 +406,7 @@ static void vfio_unmap_unpin(struct vfio_iommu *iommu, struct vfio_dma *dma)
 				break;
 		}
 
-		unmapped = iommu_unmap(domain->domain, iova, len);
+		unmapped = iommu_dma_unmap(domain->domain, iova, len);
 		if (WARN_ON(!unmapped))
 			break;
 
@@ -519,7 +546,7 @@ static int map_try_harder(struct vfio_domain *domain, dma_addr_t iova,
 	int ret = 0;
 
 	for (i = 0; i < npage; i++, pfn++, iova += PAGE_SIZE) {
-		ret = iommu_map(domain->domain, iova,
+		ret = iommu_dma_map(domain->domain, iova,
 				(phys_addr_t)pfn << PAGE_SHIFT,
 				PAGE_SIZE, prot | domain->prot);
 		if (ret)
@@ -527,7 +554,7 @@ static int map_try_harder(struct vfio_domain *domain, dma_addr_t iova,
 	}
 
 	for (; i < npage && i > 0; i--, iova -= PAGE_SIZE)
-		iommu_unmap(domain->domain, iova, PAGE_SIZE);
+		iommu_dma_unmap(domain->domain, iova, PAGE_SIZE);
 
 	return ret;
 }
@@ -539,7 +566,8 @@ static int vfio_iommu_map(struct vfio_iommu *iommu, dma_addr_t iova,
 	int ret;
 
 	list_for_each_entry(d, &iommu->domain_list, next) {
-		ret = iommu_map(d->domain, iova, (phys_addr_t)pfn << PAGE_SHIFT,
+		ret = iommu_dma_map(d->domain, iova,
+				(phys_addr_t)pfn << PAGE_SHIFT,
 				npage << PAGE_SHIFT, prot | d->prot);
 		if (ret) {
 			if (ret != -EBUSY ||
@@ -554,7 +582,7 @@ static int vfio_iommu_map(struct vfio_iommu *iommu, dma_addr_t iova,
 
 unwind:
 	list_for_each_entry_continue_reverse(d, &iommu->domain_list, next)
-		iommu_unmap(d->domain, iova, npage << PAGE_SHIFT);
+		iommu_dma_unmap(d->domain, iova, npage << PAGE_SHIFT);
 
 	return ret;
 }
@@ -690,7 +718,7 @@ static int vfio_iommu_replay(struct vfio_iommu *iommu,
 								 iova + size))
 				size += PAGE_SIZE;
 
-			ret = iommu_map(domain->domain, iova, phys,
+			ret = iommu_dma_map(domain->domain, iova, phys,
 					size, dma->prot | domain->prot);
 			if (ret)
 				return ret;
