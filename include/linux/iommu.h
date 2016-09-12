@@ -97,6 +97,7 @@ enum iommu_cap {
 					   transactions */
 	IOMMU_CAP_INTR_REMAP,		/* IOMMU supports interrupt isolation */
 	IOMMU_CAP_NOEXEC,		/* IOMMU_NOEXEC flag */
+	IOMMU_CAP_TRANSLATE_MSI,	/* IOMMU translates MSI transactions */
 };
 
 /*
