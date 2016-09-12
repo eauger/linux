@@ -36,6 +36,7 @@
 #include <linux/uaccess.h>
 #include <linux/vfio.h>
 #include <linux/workqueue.h>
+#include <linux/dma-iommu.h>
 
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_AUTHOR   "Alex Williamson <alex.williamson@redhat.com>"
@@ -828,6 +829,11 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 	}
 
 	vfio_test_domain_fgsp(domain);
+
+	/* sets the IOVA window */
+	if (iommu_capable(bus, IOMMU_CAP_TRANSLATE_MSI) &&
+	    iommu_get_dma_msi_region_cookie(domain->domain, 0, ULONG_MAX))
+		goto out_detach;
 
 	/* replay mappings on new domains */
 	ret = vfio_iommu_replay(iommu, domain);
