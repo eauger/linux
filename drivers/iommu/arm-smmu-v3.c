@@ -1375,6 +1375,8 @@ static bool arm_smmu_capable(enum iommu_cap cap)
 		return false;
 	case IOMMU_CAP_NOEXEC:
 		return true;
+	case IOMMU_CAP_TRANSLATE_MSI:
+		return true;
 	default:
 		return false;
 	}
