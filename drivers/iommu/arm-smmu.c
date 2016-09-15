@@ -477,7 +477,7 @@ static int __find_legacy_master_phandle(struct device *dev, void *data)
 			return 1;
 		}
 	it->node = np;
-	return err;
+	return err == -ENOENT ? 0 : err;
 }
 
 static struct platform_driver arm_smmu_driver;
