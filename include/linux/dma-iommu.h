@@ -70,6 +70,12 @@ void iommu_dma_map_msi_msg(int irq, struct msi_msg *msg);
 int iommu_get_dma_msi_region_cookie(struct iommu_domain *domain,
 		dma_addr_t base, u64 size);
 
+int iommu_dma_map_mixed(struct iommu_domain *domain, unsigned long iova,
+			phys_addr_t paddr, size_t size, int prot);
+
+size_t iommu_dma_unmap_mixed(struct iommu_domain *domain, unsigned long iova,
+			     size_t size);
+
 #else
 
 struct iommu_domain;
@@ -95,6 +101,18 @@ static inline void iommu_dma_map_msi_msg(int irq, struct msi_msg *msg)
 
 static inline int iommu_get_dma_msi_region_cookie(struct iommu_domain *domain,
 		dma_addr_t base, u64 size)
+{
+	return -ENODEV;
+}
+
+int iommu_dma_map_mixed(struct iommu_domain *domain, unsigned long iova,
+			phys_addr_t paddr, size_t size, int prot)
+{
+	return -ENODEV;
+}
+
+size_t iommu_dma_unmap_mixed(struct iommu_domain *domain, unsigned long iova,
+			     size_t size)
 {
 	return -ENODEV;
 }

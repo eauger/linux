@@ -759,3 +759,51 @@ int iommu_get_dma_msi_region_cookie(struct iommu_domain *domain,
 	return 0;
 }
 EXPORT_SYMBOL(iommu_get_dma_msi_region_cookie);
+
+int iommu_dma_map_mixed(struct iommu_domain *domain, unsigned long iova,
+			phys_addr_t paddr, size_t size, int prot)
+{
+	struct iova_domain *iovad;
+	unsigned long lo, hi;
+	int ret;
+
+	if (domain->type != IOMMU_DOMAIN_MIXED)
+		return -EINVAL;
+
+	if (!domain->iova_cookie)
+		return -EINVAL;
+
+	iovad = cookie_iovad(domain);
+
+	lo = iova_pfn(iovad, iova);
+	hi = iova_pfn(iovad, iova + size - 1);
+	reserve_iova(iovad, lo, hi);
+	ret = iommu_map(domain, iova, paddr, size, prot);
+	if (ret)
+		free_iova(iovad, lo);
+	return ret;
+}
+EXPORT_SYMBOL(iommu_dma_map_mixed);
+
+size_t iommu_dma_unmap_mixed(struct iommu_domain *domain, unsigned long iova,
+			     size_t size)
+{
+	struct iova_domain *iovad;
+	unsigned long lo;
+	size_t ret;
+
+	if (domain->type != IOMMU_DOMAIN_MIXED)
+		return -EINVAL;
+
+	if (!domain->iova_cookie)
+		return -EINVAL;
+
+	iovad = cookie_iovad(domain);
+	lo = iova_pfn(iovad, iova);
+
+	ret = iommu_unmap(domain, iova, size);
+	if (ret == size)
+		free_iova(iovad, lo);
+	return ret;
+}
+EXPORT_SYMBOL(iommu_dma_unmap_mixed);
