@@ -1069,7 +1069,10 @@ static struct iommu_domain *__iommu_domain_alloc(struct bus_type *bus,
 
 struct iommu_domain *iommu_domain_alloc(struct bus_type *bus)
 {
-	return __iommu_domain_alloc(bus, IOMMU_DOMAIN_UNMANAGED);
+	if (bus->iommu_ops->capable(IOMMU_CAP_TRANSLATE_MSI))
+		return __iommu_domain_alloc(bus, IOMMU_DOMAIN_MIXED);
+	else
+		return __iommu_domain_alloc(bus, IOMMU_DOMAIN_UNMANAGED);
 }
 EXPORT_SYMBOL_GPL(iommu_domain_alloc);
 
