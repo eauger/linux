@@ -943,6 +943,9 @@ static int arm_smmu_init_domain_context(struct iommu_domain *domain,
 	domain->geometry.aperture_end = (1UL << ias) - 1;
 	domain->geometry.force_aperture = true;
 
+	if (domain->type == IOMMU_DOMAIN_UNMANAGED)
+		iommu_calc_msi_resv(domain);
+
 	/* Initialise the context bank with our page table cfg */
 	arm_smmu_init_context_bank(smmu_domain, &pgtbl_cfg);
 
@@ -1485,6 +1488,10 @@ static int arm_smmu_domain_get_attr(struct iommu_domain *domain,
 	switch (attr) {
 	case DOMAIN_ATTR_NESTING:
 		*(int *)data = (smmu_domain->stage == ARM_SMMU_DOMAIN_NESTED);
+		return 0;
+	case DOMAIN_ATTR_MSI_RESV:
+		*(struct iommu_domain_msi_resv *)data =
+			smmu_domain->domain.msi_resv;
 		return 0;
 	default:
 		return -ENODEV;
