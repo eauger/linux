@@ -830,3 +830,73 @@ bool iommu_msi_doorbell_safe(void)
 	return !nb_unsafe_doorbells;
 }
 EXPORT_SYMBOL_GPL(iommu_msi_doorbell_safe);
+
+/**
+ * calc_region_reqs - compute the number of pages requested to map a region
+ *
+ * @addr: physical base address of the region
+ * @size: size of the region
+ * @order: the page order
+ *
+ * Return: the number of requested pages to map this region
+ */
+static int calc_region_reqs(phys_addr_t addr, size_t size, unsigned int order)
+{
+	phys_addr_t offset, granule;
+	unsigned int nb_pages;
+
+	granule = (uint64_t)(1 << order);
+	offset = addr & (granule - 1);
+	size = ALIGN(size + offset, granule);
+	nb_pages = size >> order;
+
+	return nb_pages;
+}
+
+/**
+ * calc_dbinfo_reqs - compute the number of pages requested to map a given
+ * MSI doorbell
+ *
+ * @dbi: doorbell info descriptor
+ * @order: page order
+ *
+ * Return: the number of requested pages to map this doorbell
+ */
+static int calc_dbinfo_reqs(struct iommu_msi_doorbell_info *dbi,
+			    unsigned int order)
+{
+	int ret = 0;
+
+	if (!dbi->doorbell_is_percpu) {
+		ret = calc_region_reqs(dbi->global_doorbell, dbi->size, order);
+	} else {
+		phys_addr_t __percpu *pbase;
+		int cpu;
+
+		for_each_possible_cpu(cpu) {
+			pbase = per_cpu_ptr(dbi->percpu_doorbells, cpu);
+			ret += calc_region_reqs(*pbase, dbi->size, order);
+		}
+	}
+	return ret;
+}
+
+int iommu_calc_msi_resv(struct iommu_domain *domain)
+{
+	unsigned long order = __ffs(domain->pgsize_bitmap);
+	struct iommu_msi_doorbell *db;
+	phys_addr_t granule;
+	int size = 0;
+
+	mutex_lock(&iommu_msi_doorbell_mutex);
+	list_for_each_entry(db, &iommu_msi_doorbell_list, next)
+		size += calc_dbinfo_reqs(&db->info, order);
+
+	mutex_unlock(&iommu_msi_doorbell_mutex);
+
+	granule = (uint64_t)(1 << order);
+	domain->msi_resv.size = size * granule;
+	domain->msi_resv.alignment = granule;
+
+	return 0;
+}

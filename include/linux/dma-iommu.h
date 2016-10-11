@@ -97,6 +97,16 @@ void iommu_msi_doorbell_free(struct iommu_msi_doorbell_info *db);
  */
 bool iommu_msi_doorbell_safe(void);
 
+/**
+ * iommu_calc_msi_resv - compute the number of pages of the lowest order
+ * supported by @domain, requested to map all the registered doorbells.
+ *
+ * @domain: iommu_domain
+ * @msi_resv: MSI reserved window requirements
+ *
+ */
+int iommu_calc_msi_resv(struct iommu_domain *domain);
+
 #else
 
 struct iommu_domain;
@@ -139,7 +149,6 @@ static inline bool iommu_msi_doorbell_safe(void)
 {
 	return false;
 }
-
 #endif	/* CONFIG_IOMMU_DMA */
 #endif	/* __KERNEL__ */
 #endif	/* __DMA_IOMMU_H */
