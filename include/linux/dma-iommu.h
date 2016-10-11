@@ -19,6 +19,8 @@
 #ifdef __KERNEL__
 #include <asm/errno.h>
 
+struct iommu_msi_doorbell_info;
+
 #ifdef CONFIG_IOMMU_DMA
 #include <linux/iommu.h>
 #include <linux/msi.h>
@@ -70,6 +72,31 @@ void iommu_dma_map_msi_msg(int irq, struct msi_msg *msg);
 int iommu_get_dma_msi_region_cookie(struct iommu_domain *domain,
 				    dma_addr_t base, u64 size);
 
+/**
+ * iommu_msi_doorbell_alloc - allocate a global doorbell
+ * @base: physical base address of the doorbell
+ * @size: size of the doorbell
+ * @safe: true is irq_remapping implemented for this doorbell
+ *
+ * Return: the newly allocated doorbell info or a pointer converted error
+ */
+struct iommu_msi_doorbell_info *
+iommu_msi_doorbell_alloc(phys_addr_t base, size_t size, bool safe);
+
+/**
+ * iommu_msi_doorbell_free - free a global doorbell
+ * @db: doorbell info to free
+ */
+void iommu_msi_doorbell_free(struct iommu_msi_doorbell_info *db);
+
+/**
+ * iommu_msi_doorbell_safe - return whether all registered doorbells are safe
+ *
+ * Safe doorbells are those which implement irq remapping
+ * Return: true if all doorbells are safe, false otherwise
+ */
+bool iommu_msi_doorbell_safe(void);
+
 #else
 
 struct iommu_domain;
@@ -97,6 +124,20 @@ static inline int iommu_get_dma_msi_region_cookie(struct iommu_domain *domain,
 						  dma_addr_t base, u64 size)
 {
 	return -ENODEV;
+}
+
+static inline struct iommu_msi_doorbell_info *
+iommu_msi_doorbell_alloc(phys_addr_t base, size_t size, bool safe)
+{
+	return NULL;
+}
+
+static inline void
+iommu_msi_doorbell_free(struct msi_doorbell_info *db) {}
+
+static inline bool iommu_msi_doorbell_safe(void)
+{
+	return false;
 }
 
 #endif	/* CONFIG_IOMMU_DMA */

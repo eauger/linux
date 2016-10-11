@@ -43,6 +43,38 @@ struct iommu_dma_cookie {
 	spinlock_t		msi_lock;
 };
 
+/**
+ * struct iommu_msi_doorbell_info - MSI doorbell region descriptor
+ * @percpu_doorbells: per cpu doorbell base address
+ * @global_doorbell: base address of the doorbell
+ * @doorbell_is_percpu: is the doorbell per cpu or global?
+ * @safe: true if irq remapping is implemented
+ * @size: size of the doorbell
+ */
+struct iommu_msi_doorbell_info {
+	union {
+		phys_addr_t __percpu    *percpu_doorbells;
+		phys_addr_t             global_doorbell;
+	};
+	bool    doorbell_is_percpu;
+	bool    safe;
+	size_t  size;
+};
+
+struct iommu_msi_doorbell {
+	struct iommu_msi_doorbell_info	info;
+	struct list_head		next;
+};
+
+/* list of registered MSI doorbells */
+static LIST_HEAD(iommu_msi_doorbell_list);
+
+/* counts the number of unsafe registered doorbells */
+static uint nb_unsafe_doorbells;
+
+/* protects the list and nb_unsafe_doorbells */
+static DEFINE_MUTEX(iommu_msi_doorbell_mutex);
+
 static inline struct iova_domain *cookie_iovad(struct iommu_domain *domain)
 {
 	return &((struct iommu_dma_cookie *)domain->iova_cookie)->iovad;
@@ -755,3 +787,46 @@ int iommu_get_dma_msi_region_cookie(struct iommu_domain *domain,
 	return 0;
 }
 EXPORT_SYMBOL(iommu_get_dma_msi_region_cookie);
+
+struct iommu_msi_doorbell_info *
+iommu_msi_doorbell_alloc(phys_addr_t base, size_t size, bool safe)
+{
+	struct iommu_msi_doorbell *db;
+
+	db = kzalloc(sizeof(*db), GFP_KERNEL);
+	if (!db)
+		return ERR_PTR(-ENOMEM);
+
+	db->info.global_doorbell = base;
+	db->info.size = size;
+	db->info.safe = safe;
+
+	mutex_lock(&iommu_msi_doorbell_mutex);
+	list_add(&db->next, &iommu_msi_doorbell_list);
+	if (!db->info.safe)
+		nb_unsafe_doorbells++;
+	mutex_unlock(&iommu_msi_doorbell_mutex);
+	return &db->info;
+}
+EXPORT_SYMBOL_GPL(iommu_msi_doorbell_alloc);
+
+void iommu_msi_doorbell_free(struct iommu_msi_doorbell_info *dbinfo)
+{
+	struct iommu_msi_doorbell *db;
+
+	db = container_of(dbinfo, struct iommu_msi_doorbell, info);
+
+	mutex_lock(&iommu_msi_doorbell_mutex);
+	list_del(&db->next);
+	if (!db->info.safe)
+		nb_unsafe_doorbells--;
+	mutex_unlock(&iommu_msi_doorbell_mutex);
+	kfree(db);
+}
+EXPORT_SYMBOL_GPL(iommu_msi_doorbell_free);
+
+bool iommu_msi_doorbell_safe(void)
+{
+	return !nb_unsafe_doorbells;
+}
+EXPORT_SYMBOL_GPL(iommu_msi_doorbell_safe);
