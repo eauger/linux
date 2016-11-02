@@ -1077,6 +1077,10 @@ EXPORT_SYMBOL_GPL(iommu_domain_alloc);
 
 void iommu_domain_free(struct iommu_domain *domain)
 {
+	struct iommu_reserved_region *entry, *next;
+
+	list_for_each_entry_safe(entry, next, &domain->reserved_regions, list)
+		kfree(entry);
 	domain->ops->domain_free(domain);
 }
 EXPORT_SYMBOL_GPL(iommu_domain_free);
@@ -1089,6 +1093,15 @@ static int __iommu_attach_device(struct iommu_domain *domain,
 		return -ENODEV;
 
 	ret = domain->ops->attach_dev(domain, dev);
+	if (ret)
+		return ret;
+
+	if (domain->type == IOMMU_DOMAIN_UNMANAGED) {
+		mutex_lock(&domain->resv_mutex);
+		ret = iommu_add_reserved_regions(domain, dev);
+		mutex_unlock(&domain->resv_mutex);
+	}
+
 	if (!ret)
 		trace_attach_device_to_domain(dev);
 	return ret;
@@ -1547,6 +1560,16 @@ int iommu_domain_set_attr(struct iommu_domain *domain,
 	return ret;
 }
 EXPORT_SYMBOL_GPL(iommu_domain_set_attr);
+
+int iommu_add_reserved_regions(struct iommu_domain *domain, struct device *dev)
+{
+	const struct iommu_ops *ops = dev->bus->iommu_ops;
+
+	if (ops && ops->add_reserved_regions)
+		return ops->add_reserved_regions(domain, dev);
+	else
+		return 0;
+}
 
 void iommu_get_dm_regions(struct device *dev, struct list_head *list)
 {

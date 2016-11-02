@@ -170,6 +170,7 @@ struct iommu_reserved_region {
  * @get_dm_regions: Request list of direct mapping requirements for a device
  * @put_dm_regions: Free list of direct mapping requirements for a device
  * @apply_dm_region: Temporary helper call-back for iova reserved ranges
+ * @add_reserved_regions: Populate reserved regions for a device
  * @domain_window_enable: Configure and enable a particular window for a domain
  * @domain_window_disable: Disable a particular window for a domain
  * @domain_set_windows: Set the number of windows for a domain
@@ -206,6 +207,10 @@ struct iommu_ops {
 	void (*put_dm_regions)(struct device *dev, struct list_head *list);
 	void (*apply_dm_region)(struct device *dev, struct iommu_domain *domain,
 				struct iommu_dm_region *region);
+
+	/* Add reserved regions for a device */
+	int (*add_reserved_regions)(struct iommu_domain *domain,
+				     struct device *device);
 
 	/* Window handling functions */
 	int (*domain_window_enable)(struct iommu_domain *domain, u32 wnd_nr,
@@ -289,6 +294,7 @@ struct device *iommu_device_create(struct device *parent, void *drvdata,
 void iommu_device_destroy(struct device *dev);
 int iommu_device_link(struct device *dev, struct device *link);
 void iommu_device_unlink(struct device *dev, struct device *link);
+int iommu_add_reserved_regions(struct iommu_domain *domain, struct device *dev);
 
 /* Window handling function prototypes */
 extern int iommu_domain_window_enable(struct iommu_domain *domain, u32 wnd_nr,
