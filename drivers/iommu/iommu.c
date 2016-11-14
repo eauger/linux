@@ -32,6 +32,7 @@
 #include <linux/pci.h>
 #include <linux/bitops.h>
 #include <linux/property.h>
+#include <linux/list_sort.h>
 #include <trace/events/iommu.h>
 
 static struct kset *iommu_group_kset;
@@ -186,7 +187,46 @@ int iommu_get_group_resv_regions(struct iommu_group *group,
 }
 EXPORT_SYMBOL_GPL(iommu_get_group_resv_regions);
 
+static int iommu_resv_region_cmp(void *priv, struct list_head *a,
+			       struct list_head *b)
+{
+	struct iommu_resv_region *rega, *regb;
+
+	rega = container_of(a, struct iommu_resv_region, list);
+	regb = container_of(b, struct iommu_resv_region, list);
+
+	if (rega->start + rega->length - 1 < regb->start)
+		return -1;
+	if (regb->start + regb->length - 1 < rega->start)
+		return 1;
+	else
+		return 0;
+}
+
+static ssize_t iommu_group_show_resv_regions(struct iommu_group *group,
+					     char *buf)
+{
+	struct iommu_resv_region *region, *next;
+	struct list_head group_resv_regions;
+	char *str = buf;
+
+	INIT_LIST_HEAD(&group_resv_regions);
+	iommu_get_group_resv_regions(group, &group_resv_regions);
+	list_sort(NULL, &group_resv_regions, iommu_resv_region_cmp);
+
+	list_for_each_entry_safe(region, next, &group_resv_regions, list) {
+		str += sprintf(str, "0x%016llx 0x%016llx\n", region->start,
+			       region->start + region->length - 1);
+		kfree(region);
+	}
+
+	return (str - buf);
+}
+
 static IOMMU_GROUP_ATTR(name, S_IRUGO, iommu_group_show_name, NULL);
+
+static IOMMU_GROUP_ATTR(reserved_regions, S_IRUGO,
+			iommu_group_show_resv_regions, NULL);
 
 static void iommu_group_release(struct kobject *kobj)
 {
@@ -201,6 +241,8 @@ static void iommu_group_release(struct kobject *kobj)
 
 	if (group->default_domain)
 		iommu_domain_free(group->default_domain);
+
+	iommu_group_remove_file(group, &iommu_group_attr_reserved_regions);
 
 	kfree(group->name);
 	kfree(group);
@@ -264,6 +306,11 @@ struct iommu_group *iommu_group_alloc(void)
 	 * use the devices_kobj for reference counting.
 	 */
 	kobject_put(&group->kobj);
+
+	ret = iommu_group_create_file(group,
+				      &iommu_group_attr_reserved_regions);
+	if (ret)
+		return ERR_PTR(ret);
 
 	pr_debug("Allocated group %d\n", group->id);
 
