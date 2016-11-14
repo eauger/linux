@@ -36,6 +36,7 @@
 #include <linux/uaccess.h>
 #include <linux/vfio.h>
 #include <linux/workqueue.h>
+#include <linux/dma-iommu.h>
 
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_AUTHOR   "Alex Williamson <alex.williamson@redhat.com>"
@@ -734,6 +735,27 @@ static void vfio_test_domain_fgsp(struct vfio_domain *domain)
 	__free_pages(pages, order);
 }
 
+static int vfio_iommu_handle_resv_regions(struct iommu_domain *domain,
+					  struct iommu_group *group)
+{
+	struct list_head group_resv_regions;
+	struct iommu_resv_region *region, *next;
+	int ret = 0;
+
+	INIT_LIST_HEAD(&group_resv_regions);
+	iommu_get_group_resv_regions(group, &group_resv_regions);
+	list_for_each_entry(region, &group_resv_regions, list) {
+		if (region->prot & IOMMU_RESV_MSI) {
+			ret = iommu_get_msi_cookie(domain, region->start);
+			if (ret)
+				break;
+		}
+	}
+	list_for_each_entry_safe(region, next, &group_resv_regions, list)
+		kfree(region);
+	return ret;
+}
+
 static int vfio_iommu_type1_attach_group(void *iommu_data,
 					 struct iommu_group *iommu_group)
 {
@@ -831,6 +853,10 @@ static int vfio_iommu_type1_attach_group(void *iommu_data,
 
 	/* replay mappings on new domains */
 	ret = vfio_iommu_replay(iommu, domain);
+	if (ret)
+		goto out_detach;
+
+	ret = vfio_iommu_handle_resv_regions(domain->domain, iommu_group);
 	if (ret)
 		goto out_detach;
 
