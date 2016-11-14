@@ -32,6 +32,10 @@
 #define IOMMU_NOEXEC	(1 << 3)
 #define IOMMU_MMIO	(1 << 4) /* e.g. things like MSI doorbells */
 
+#define IOMMU_RESV_MASK		0x300 /* Reserved IOVA mask */
+#define IOMMU_RESV_NOMAP	(1 << 8) /* IOVA that cannot be mapped */
+#define IOMMU_RESV_MSI		(1 << 9) /* MSI region transparently mapped */
+
 struct iommu_ops;
 struct iommu_group;
 struct bus_type;
