@@ -133,6 +133,59 @@ static ssize_t iommu_group_show_name(struct iommu_group *group, char *buf)
 	return sprintf(buf, "%s\n", group->name);
 }
 
+static bool iommu_resv_region_present(struct iommu_resv_region *region,
+				      struct list_head *head)
+{
+	struct iommu_resv_region *entry;
+
+	list_for_each_entry(entry, head, list) {
+		if ((region->start == entry->start) &&
+		    (region->length == entry->length) &&
+		    (region->prot == entry->prot))
+			return true;
+	}
+	return false;
+}
+
+static int
+iommu_insert_device_resv_regions(struct list_head *dev_resv_regions,
+				 struct list_head *group_resv_regions)
+{
+	struct iommu_resv_region *entry, *region;
+
+	list_for_each_entry(entry, dev_resv_regions, list) {
+		if (iommu_resv_region_present(entry, group_resv_regions))
+			continue;
+		region = iommu_alloc_resv_region(entry->start, entry->length,
+					       entry->prot);
+		if (!region)
+			return -ENOMEM;
+
+		list_add_tail(&region->list, group_resv_regions);
+	}
+	return 0;
+}
+
+int iommu_get_group_resv_regions(struct iommu_group *group,
+				 struct list_head *head)
+{
+	struct iommu_device *device;
+	int ret = 0;
+
+	list_for_each_entry(device, &group->devices, list) {
+		struct list_head dev_resv_regions;
+
+		INIT_LIST_HEAD(&dev_resv_regions);
+		iommu_get_resv_regions(device->dev, &dev_resv_regions);
+		ret = iommu_insert_device_resv_regions(&dev_resv_regions, head);
+		iommu_put_resv_regions(device->dev, &dev_resv_regions);
+		if (ret)
+			break;
+	}
+	return ret;
+}
+EXPORT_SYMBOL_GPL(iommu_get_group_resv_regions);
+
 static IOMMU_GROUP_ATTR(name, S_IRUGO, iommu_group_show_name, NULL);
 
 static void iommu_group_release(struct kobject *kobj)
