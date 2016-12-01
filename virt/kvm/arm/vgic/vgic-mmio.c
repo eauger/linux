@@ -371,6 +371,52 @@ void vgic_mmio_write_config(struct kvm_vcpu *vcpu,
 	}
 }
 
+u64 vgic_read_irq_line_level_info(struct kvm_vcpu *vcpu, u32 intid)
+{
+	int i;
+	u64 val = 0;
+
+	for (i = 0; i < 32; i++) {
+		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
+
+		if (irq->line_level)
+			val |= (1U << i);
+
+		vgic_put_irq(vcpu->kvm, irq);
+	}
+
+	return val;
+}
+
+void vgic_write_irq_line_level_info(struct kvm_vcpu *vcpu, u32 intid,
+				    const u64 val)
+{
+	int i;
+
+	for (i = 0; i < 32; i++) {
+		struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, intid + i);
+
+		spin_lock(&irq->irq_lock);
+		if (val & (1U << i)) {
+			if (irq->config == VGIC_CONFIG_LEVEL) {
+				irq->line_level = true;
+				irq->pending = true;
+				vgic_queue_irq_unlock(vcpu->kvm, irq);
+			} else {
+				spin_unlock(&irq->irq_lock);
+			}
+		} else {
+			if (irq->config == VGIC_CONFIG_EDGE ||
+			    (irq->config == VGIC_CONFIG_LEVEL &&
+			    !irq->soft_pending))
+				irq->line_level = false;
+			spin_unlock(&irq->irq_lock);
+		}
+
+		vgic_put_irq(vcpu->kvm, irq);
+	}
+}
+
 static int match_region(const void *key, const void *elt)
 {
 	const unsigned int offset = (unsigned long)key;

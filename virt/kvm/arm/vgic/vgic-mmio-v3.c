@@ -809,3 +809,14 @@ int vgic_v3_redist_uaccess(struct kvm_vcpu *vcpu, bool is_write,
 		return vgic_uaccess(vcpu, &rd_dev, is_write,
 				    offset, val);
 }
+
+int vgic_v3_line_level_info_uaccess(struct kvm_vcpu *vcpu, bool is_write,
+				    u32 intid, u64 *val)
+{
+	if (is_write)
+		vgic_write_irq_line_level_info(vcpu, intid, *val);
+	else
+		*val = vgic_read_irq_line_level_info(vcpu, intid);
+
+	return 0;
+}
