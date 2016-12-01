@@ -394,6 +394,28 @@ vgic_find_mmio_region(const struct vgic_register_region *region, int nr_regions,
 		       sizeof(region[0]), match_region);
 }
 
+/* Check if address falls within the region */
+int vgic_validate_mmio_region_addr(struct kvm_device *dev,
+				   const struct vgic_register_region *regions,
+				   int nr_regions, gpa_t addr)
+{
+	int i, len;
+	int nr_irqs = dev->kvm->arch.vgic.nr_spis + VGIC_NR_PRIVATE_IRQS;
+
+	for (i = 0; i < nr_regions; i++) {
+		if (regions[i].bits_per_irq)
+			len = (regions[i].bits_per_irq * nr_irqs) / 8;
+		else
+			len = regions[i].len;
+
+		if (regions[i].reg_offset <= addr &&
+		    regions[i].reg_offset + len > addr)
+			return 0;
+	}
+
+	return -ENXIO;
+}
+
 /*
  * kvm_mmio_read_buf() returns a value in a format where it can be converted
  * to a byte array and be directly observed as the guest wanted it to appear
