@@ -642,6 +642,24 @@ int vgic_v3_has_attr_regs(struct kvm_device *dev, struct kvm_device_attr *attr)
 		nr_regions = ARRAY_SIZE(vgic_v3_rdbase_registers);
 		break;
 	}
+	case KVM_DEV_ARM_VGIC_CPU_SYSREGS: {
+		u64 reg, id;
+		unsigned long vgic_mpidr, mpidr_reg;
+		struct kvm_vcpu *vcpu;
+
+		vgic_mpidr = (attr->attr & KVM_DEV_ARM_VGIC_V3_MPIDR_MASK) >>
+			      KVM_DEV_ARM_VGIC_V3_MPIDR_SHIFT;
+
+		/* Convert plain mpidr value to MPIDR reg format */
+		mpidr_reg = VGIC_TO_MPIDR(vgic_mpidr);
+
+		vcpu = kvm_mpidr_to_vcpu(dev->kvm, mpidr_reg);
+		if (!vcpu)
+			return -EINVAL;
+
+		id = (attr->attr & KVM_DEV_ARM_VGIC_SYSREG_INSTR_MASK);
+		return vgic_v3_has_cpu_sysregs_attr(vcpu, 0, id, &reg);
+	}
 	default:
 		return -ENXIO;
 	}
