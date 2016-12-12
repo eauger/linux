@@ -183,6 +183,9 @@ enum {
 	/* Irq domain is an IPI domain with single virq */
 	IRQ_DOMAIN_FLAG_IPI_SINGLE	= (1 << 3),
 
+	/* Irq domain is MSI remapping capable */
+	IRQ_DOMAIN_FLAG_MSI_REMAP	= (1 << 4),
+
 	/*
 	 * Flags starting from IRQ_DOMAIN_FLAG_NONCORE are reserved
 	 * for implementation specific purposes and ignored by the
