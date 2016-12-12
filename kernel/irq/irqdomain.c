@@ -278,6 +278,30 @@ struct irq_domain *irq_find_matching_fwspec(struct irq_fwspec *fwspec,
 EXPORT_SYMBOL_GPL(irq_find_matching_fwspec);
 
 /**
+ * irq_domain_check_msi_remap() - Checks whether all PCI and
+ * platform MSI irq domains implement IRQ remapping
+ */
+bool irq_domain_check_msi_remap(void)
+{
+	struct irq_domain *h;
+	bool ret = true;
+
+	mutex_lock(&irq_domain_mutex);
+	list_for_each_entry(h, &irq_domain_list, link) {
+		if (((h->bus_token & DOMAIN_BUS_PCI_MSI) ||
+		     (h->bus_token & DOMAIN_BUS_PLATFORM_MSI)) &&
+		    !(h->flags & IRQ_DOMAIN_FLAG_MSI_REMAP)) {
+			ret = false;
+			goto out;
+		}
+	}
+out:
+	mutex_unlock(&irq_domain_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(irq_domain_check_msi_remap);
+
+/**
  * irq_set_default_host() - Set a "default" irq domain
  * @domain: default domain pointer
  *
