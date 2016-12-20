@@ -1287,13 +1287,14 @@ static void vgic_mmio_write_its_baser(struct kvm *kvm,
 	*regptr = reg;
 }
 
-#define REGISTER_ITS_DESC(off, rd, wr, length, acc)		\
+#define REGISTER_ITS_DESC(off, rd, wr, uwr, length, acc)		\
 {								\
 	.reg_offset = off,					\
 	.len = length,						\
 	.access_flags = acc,					\
 	.its_read = rd,						\
 	.its_write = wr,					\
+	.uaccess_its_write = uwr,					\
 }
 
 static void its_mmio_write_wi(struct kvm *kvm, struct vgic_its *its,
@@ -1304,28 +1305,28 @@ static void its_mmio_write_wi(struct kvm *kvm, struct vgic_its *its,
 
 static struct vgic_register_region its_registers[] = {
 	REGISTER_ITS_DESC(GITS_CTLR,
-		vgic_mmio_read_its_ctlr, vgic_mmio_write_its_ctlr, 4,
+		vgic_mmio_read_its_ctlr, vgic_mmio_write_its_ctlr, NULL, 4,
 		VGIC_ACCESS_32bit),
 	REGISTER_ITS_DESC(GITS_IIDR,
-		vgic_mmio_read_its_iidr, its_mmio_write_wi, 4,
+		vgic_mmio_read_its_iidr, its_mmio_write_wi, NULL, 4,
 		VGIC_ACCESS_32bit),
 	REGISTER_ITS_DESC(GITS_TYPER,
-		vgic_mmio_read_its_typer, its_mmio_write_wi, 8,
+		vgic_mmio_read_its_typer, its_mmio_write_wi, NULL, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
 	REGISTER_ITS_DESC(GITS_CBASER,
-		vgic_mmio_read_its_cbaser, vgic_mmio_write_its_cbaser, 8,
+		vgic_mmio_read_its_cbaser, vgic_mmio_write_its_cbaser, NULL, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
 	REGISTER_ITS_DESC(GITS_CWRITER,
-		vgic_mmio_read_its_cwriter, vgic_mmio_write_its_cwriter, 8,
-		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
+		vgic_mmio_read_its_cwriter, vgic_mmio_write_its_cwriter, NULL,
+		8, VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
 	REGISTER_ITS_DESC(GITS_CREADR,
-		vgic_mmio_read_its_creadr, its_mmio_write_wi, 8,
+		vgic_mmio_read_its_creadr, its_mmio_write_wi, NULL, 8,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
 	REGISTER_ITS_DESC(GITS_BASER,
-		vgic_mmio_read_its_baser, vgic_mmio_write_its_baser, 0x40,
+		vgic_mmio_read_its_baser, vgic_mmio_write_its_baser, NULL, 0x40,
 		VGIC_ACCESS_64bit | VGIC_ACCESS_32bit),
 	REGISTER_ITS_DESC(GITS_IDREGS_BASE,
-		vgic_mmio_read_its_idregs, its_mmio_write_wi, 0x30,
+		vgic_mmio_read_its_idregs, its_mmio_write_wi, NULL, 0x30,
 		VGIC_ACCESS_32bit),
 };
 
@@ -1448,14 +1449,63 @@ static void vgic_its_destroy(struct kvm_device *kvm_dev)
 int vgic_its_has_attr_regs(struct kvm_device *dev,
 			   struct kvm_device_attr *attr)
 {
-	return -ENXIO;
+	const struct vgic_register_region *region;
+	struct vgic_io_device iodev = {
+		.regions = its_registers,
+		.nr_regions = ARRAY_SIZE(its_registers),
+	};
+	gpa_t offset;
+
+	offset = attr->attr;
+
+	region = vgic_find_mmio_region(iodev.regions,
+				       iodev.nr_regions,
+				       offset);
+	if (!region)
+		return -ENXIO;
+	return 0;
 }
 
 int vgic_its_attr_regs_access(struct kvm_device *dev,
 			      struct kvm_device_attr *attr,
 			      u64 *reg, bool is_write)
 {
-	return -ENXIO;
+	const struct vgic_register_region *region;
+	struct vgic_io_device iodev = {
+		.regions = its_registers,
+		.nr_regions = ARRAY_SIZE(its_registers),
+	};
+	struct vgic_its *its = dev->private;
+	gpa_t addr, offset;
+	unsigned int len;
+
+	if (IS_VGIC_ADDR_UNDEF(its->vgic_its_base))
+		return -ENXIO;
+
+	offset = attr->attr;
+	if (offset & 0x7)
+		return -EINVAL;
+
+	addr = its->vgic_its_base + offset;
+
+	region = vgic_find_mmio_region(iodev.regions,
+				       iodev.nr_regions,
+				       offset);
+	if (!region)
+		return -ENXIO;
+
+	len = region->access_flags & VGIC_ACCESS_64bit ? 8 : 4;
+
+	if (is_write) {
+		if (region->uaccess_its_write)
+			region->uaccess_its_write(dev->kvm, its, addr,
+						  len, *reg);
+		else
+			region->its_write(dev->kvm, its, addr, len, *reg);
+	} else {
+		*reg = region->its_read(dev->kvm, its, addr, len);
+	}
+	return 0;
 }
 
 static int vgic_its_has_attr(struct kvm_device *dev,
