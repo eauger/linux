@@ -1469,14 +1469,88 @@ static void vgic_its_destroy(struct kvm_device *kvm_dev)
 int vgic_its_has_attr_regs(struct kvm_device *dev,
 			   struct kvm_device_attr *attr)
 {
-	return -ENXIO;
+	const struct vgic_register_region *region;
+	struct vgic_io_device iodev = {
+		.regions = its_registers,
+		.nr_regions = ARRAY_SIZE(its_registers),
+	};
+	gpa_t offset = attr->attr;
+
+	region = vgic_find_mmio_region(iodev.regions,
+				       iodev.nr_regions,
+				       offset);
+	if (!region)
+		return -ENXIO;
+
+	return 0;
 }
 
 int vgic_its_attr_regs_access(struct kvm_device *dev,
 			      struct kvm_device_attr *attr,
 			      u64 *reg, bool is_write)
 {
-	return -ENXIO;
+	const struct vgic_register_region *region;
+	struct vgic_io_device iodev = {
+		.regions = its_registers,
+		.nr_regions = ARRAY_SIZE(its_registers),
+	};
+	struct vgic_its *its = dev->private;
+	gpa_t addr, offset = attr->attr;
+	unsigned int len;
+	unsigned long data = 0;
+	int ret = 0;
+
+	/*
+	 * Among supported registers, only GITS_CTLR (0x0) and GITS_IIDR (0x4)
+	 * are 32 bits. Others are 64 bits.
+	 */
+	if ((offset < 0x8 && offset & 0x3) || (offset >= 0x8 && offset & 0x7))
+		return -EINVAL;
+
+	mutex_lock(&dev->kvm->lock);
+
+	if (IS_VGIC_ADDR_UNDEF(its->vgic_its_base)) {
+		ret = -ENXIO;
+		goto out;
+	}
+
+	region = vgic_find_mmio_region(iodev.regions,
+				       iodev.nr_regions,
+				       offset);
+	if (!region) {
+		ret = -ENXIO;
+		goto out;
+	}
+
+	if (!lock_all_vcpus(dev->kvm)) {
+		ret = -EBUSY;
+		goto out;
+	}
+
+	addr = its->vgic_its_base + offset;
+
+	/*
+	 * Only full length register accesses are supported although
+	 * the architecture spec theoretically allows upper/lower 32
+	 * bits to be accessed independently
+	 */
+	len = region->access_flags & VGIC_ACCESS_64bit ? 8 : 4;
+
+	if (is_write) {
+		data = vgic_data_mmio_bus_to_host(reg, len);
+		if (region->uaccess_its_write)
+			region->uaccess_its_write(dev->kvm, its, addr,
+						  len, data);
+		else
+			region->its_write(dev->kvm, its, addr, len, data);
+	} else {
+		data = region->its_read(dev->kvm, its, addr, len);
+		vgic_data_host_to_mmio_bus(reg, len, data);
+	}
+	unlock_all_vcpus(dev->kvm);
+out:
+	mutex_unlock(&dev->kvm->lock);
+	return ret;
 }
 
 static int vgic_its_has_attr(struct kvm_device *dev,
