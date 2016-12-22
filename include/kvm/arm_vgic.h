@@ -156,6 +156,9 @@ struct vgic_its {
 	u64			baser_device_table;
 	u64			baser_coll_table;
 
+	size_t			device_table_size;
+	size_t			collection_table_size;
+
 	/* Protects the command queue */
 	struct mutex		cmd_lock;
 	u64			cbaser;

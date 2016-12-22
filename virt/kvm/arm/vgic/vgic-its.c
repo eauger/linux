@@ -34,6 +34,8 @@
 #include "vgic-mmio.h"
 
 #define ITTE_SIZE 16
+#define DEV_ENTRY_SIZE 16
+#define COLL_ENTRY_SIZE 16
 
 /*
  * Creates a new (reference to a) struct vgic_irq for a given LPI.
@@ -1269,14 +1271,16 @@ static unsigned long vgic_mmio_read_its_baser(struct kvm *kvm,
 	return extract_bytes(reg, addr & 7, len);
 }
 
-#define GITS_BASER_RO_MASK	(GENMASK_ULL(52, 48) | GENMASK_ULL(58, 56))
+#define GITS_BASER_RO_MASK	(GENMASK_ULL(52, 48) | GENMASK_ULL(58, 56) | \
+				 GENMASK_ULL(62, 62))
 static void vgic_mmio_write_its_baser(struct kvm *kvm,
 				      struct vgic_its *its,
 				      gpa_t addr, unsigned int len,
 				      unsigned long val)
 {
 	u64 entry_size, device_type;
-	u64 reg, *regptr, clearbits = 0;
+	u64 reg, *regptr;
+	size_t *psize;
 
 	/* When GITS_CTLR.Enable is 1, we ignore write accesses. */
 	if (its->enabled)
@@ -1285,14 +1289,15 @@ static void vgic_mmio_write_its_baser(struct kvm *kvm,
 	switch (BASER_INDEX(addr)) {
 	case 0:
 		regptr = &its->baser_device_table;
-		entry_size = 8;
+		entry_size = DEV_ENTRY_SIZE;
 		device_type = GITS_BASER_TYPE_DEVICE;
+		psize = &its->device_table_size;
 		break;
 	case 1:
 		regptr = &its->baser_coll_table;
-		entry_size = 8;
+		entry_size = COLL_ENTRY_SIZE;
 		device_type = GITS_BASER_TYPE_COLLECTION;
-		clearbits = GITS_BASER_INDIRECT;
+		psize = &its->collection_table_size;
 		break;
 	default:
 		return;
@@ -1300,11 +1305,12 @@ static void vgic_mmio_write_its_baser(struct kvm *kvm,
 
 	reg = update_64bit_reg(*regptr, addr & 7, len, val);
 	reg &= ~GITS_BASER_RO_MASK;
-	reg &= ~clearbits;
 
 	reg |= (entry_size - 1) << GITS_BASER_ENTRY_SIZE_SHIFT;
 	reg |= device_type << GITS_BASER_TYPE_SHIFT;
 	reg = vgic_sanitise_its_baser(reg);
+
+	*psize = ((reg & 0xFF) + 1) << 16;
 
 	*regptr = reg;
 }
@@ -1390,7 +1396,6 @@ static int vgic_register_its_iodev(struct kvm *kvm, struct vgic_its *its)
 	(GIC_BASER_CACHEABILITY(GITS_BASER, INNER, RaWb)		| \
 	 GIC_BASER_CACHEABILITY(GITS_BASER, OUTER, SameAsInner)		| \
 	 GIC_BASER_SHAREABILITY(GITS_BASER, InnerShareable)		| \
-	 ((8ULL - 1) << GITS_BASER_ENTRY_SIZE_SHIFT)			| \
 	 GITS_BASER_PAGE_SIZE_64K)
 
 #define INITIAL_PROPBASER_VALUE						  \
@@ -1423,9 +1428,11 @@ static int vgic_its_create(struct kvm_device *dev, u32 type)
 	its->dev = dev;
 
 	its->baser_device_table = INITIAL_BASER_VALUE			|
-		((u64)GITS_BASER_TYPE_DEVICE << GITS_BASER_TYPE_SHIFT);
+		((u64)GITS_BASER_TYPE_DEVICE << GITS_BASER_TYPE_SHIFT)  |
+		((u64)(DEV_ENTRY_SIZE - 1) << GITS_BASER_ENTRY_SIZE_SHIFT);
 	its->baser_coll_table = INITIAL_BASER_VALUE |
-		((u64)GITS_BASER_TYPE_COLLECTION << GITS_BASER_TYPE_SHIFT);
+		((u64)GITS_BASER_TYPE_COLLECTION << GITS_BASER_TYPE_SHIFT) |
+		((u64)(COLL_ENTRY_SIZE - 1) << GITS_BASER_ENTRY_SIZE_SHIFT);
 	dev->kvm->arch.vgic.propbaser = INITIAL_PROPBASER_VALUE;
 
 	dev->private = its;
