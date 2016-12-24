@@ -1627,6 +1627,135 @@ out:
 	return ret;
 }
 
+/**
+ * vgic_its_flush_pending_tables - Flush the pending tables into guest RAM
+ */
+static int vgic_its_flush_pending_tables(struct kvm *kvm)
+{
+	return -ENXIO;
+}
+
+/**
+ * vgic_its_restore_pending_tables - Restore the pending tables from guest
+ * RAM to internal data structs
+ */
+static int vgic_its_restore_pending_tables(struct kvm *kvm)
+{
+	return -ENXIO;
+}
+
+/**
+ * vgic_its_flush_device_tables - flush the device table and all ITT
+ * into guest RAM
+ */
+static int vgic_its_flush_device_tables(struct vgic_its *its)
+{
+	return -ENXIO;
+}
+
+/**
+ * vgic_its_restore_device_tables - restore the device table and all ITT
+ * from guest RAM to internal data structs
+ */
+static int vgic_its_restore_device_tables(struct vgic_its *its)
+{
+	return -ENXIO;
+}
+
+/**
+ * vgic_its_flush_collection_table - flush the collection table into
+ * guest RAM
+ */
+static int vgic_its_flush_collection_table(struct vgic_its *its)
+{
+	return -ENXIO;
+}
+
+/**
+ * vgic_its_restore_collection_table - reads the collection table
+ * in guest memory and restores the ITS internal state. Requires the
+ * BASER registers to be restored before.
+ */
+static int vgic_its_restore_collection_table(struct vgic_its *its)
+{
+	return -ENXIO;
+}
+
+/**
+ * vgic_its_table_flush - Flush all the tables into guest RAM
+ */
+static int vgic_its_table_flush(struct vgic_its *its)
+{
+	struct kvm *kvm = its->dev->kvm;
+	int ret;
+
+	mutex_lock(&kvm->lock);
+
+	if (!lock_all_vcpus(kvm)) {
+		mutex_unlock(&kvm->lock);
+		return -EBUSY;
+	}
+
+	ret = vgic_its_flush_pending_tables(kvm);
+	if (ret)
+		goto out;
+	ret = vgic_its_flush_device_tables(its);
+	if (ret)
+		goto out;
+
+	ret = vgic_its_flush_collection_table(its);
+
+out:
+	unlock_all_vcpus(kvm);
+	mutex_unlock(&kvm->lock);
+	return ret;
+}
+
+/**
+ * vgic_its_table_restore - Restore all tables from guest RAM to internal
+ * data structs
+ */
+static int vgic_its_table_restore(struct vgic_its *its)
+{
+	struct kvm *kvm = its->dev->kvm;
+	int ret;
+
+	mutex_lock(&kvm->lock);
+
+	if (its->user_revision < REV) {
+		mutex_unlock(&kvm->lock);
+		return -EINVAL;
+	}
+
+	if (!lock_all_vcpus(kvm)) {
+		mutex_unlock(&kvm->lock);
+		return -EBUSY;
+	}
+
+	ret = vgic_its_restore_collection_table(its);
+	if (ret)
+		goto out;
+
+	ret = vgic_its_restore_device_tables(its);
+	if (ret)
+		goto out;
+
+	ret = vgic_its_restore_pending_tables(kvm);
+
+out:
+	unlock_all_vcpus(kvm);
+	mutex_unlock(&kvm->lock);
+
+	if (ret)
+		return ret;
+
+	/*
+	 * On restore path, MSI injections can happen before the
+	 * first VCPU run so let's complete the GIC init here.
+	 */
+	return kvm_vgic_map_resources(its->dev->kvm);
+}
+
 static int vgic_its_has_attr(struct kvm_device *dev,
 			     struct kvm_device_attr *attr)
 {
@@ -1645,6 +1774,8 @@ static int vgic_its_has_attr(struct kvm_device *dev,
 		break;
 	case KVM_DEV_ARM_VGIC_GRP_ITS_REGS:
 		return vgic_its_has_attr_regs(dev, attr);
+	case KVM_DEV_ARM_VGIC_GRP_ITS_TABLES:
+		return 0;
 	}
 	return -ENXIO;
 }
@@ -1693,6 +1824,10 @@ static int vgic_its_set_attr(struct kvm_device *dev,
 
 		return vgic_its_attr_regs_access(dev, attr, &reg, true);
 	}
+	case KVM_DEV_ARM_VGIC_GRP_ITS_TABLES:
+		if (attr->attr)
+			return -EINVAL;
+		return vgic_its_table_restore(its);
 	}
 	return -ENXIO;
 }
@@ -1700,9 +1835,10 @@ static int vgic_its_set_attr(struct kvm_device *dev,
 static int vgic_its_get_attr(struct kvm_device *dev,
 			     struct kvm_device_attr *attr)
 {
+	struct vgic_its *its = dev->private;
+
 	switch (attr->group) {
 	case KVM_DEV_ARM_VGIC_GRP_ADDR: {
-		struct vgic_its *its = dev->private;
 		u64 addr = its->vgic_its_base;
 		u64 __user *uaddr = (u64 __user *)(long)attr->addr;
 		unsigned long type = (unsigned long)attr->attr;
@@ -1723,6 +1859,10 @@ static int vgic_its_get_attr(struct kvm_device *dev,
 		if (ret)
 			return ret;
 		return put_user(reg, uaddr);
+	case KVM_DEV_ARM_VGIC_GRP_ITS_TABLES:
+		if (attr->attr)
+			return -EINVAL;
+		return vgic_its_table_flush(its);
 	}
 	default:
 		return -ENXIO;
