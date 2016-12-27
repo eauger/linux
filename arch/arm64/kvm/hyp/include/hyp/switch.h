@@ -172,6 +172,10 @@ static bool kvm_hyp_handle_fpsimd(struct kvm_vcpu *vcpu, u64 *exit_code)
 	if (!system_supports_fpsimd())
 		return false;
 
+	/* Forward traps to the guest hypervisor as required */
+	if (guest_hyp_fpsimd_traps_enabled(vcpu))
+		return false;
+
 	sve_guest = vcpu_has_sve(vcpu);
 	esr_ec = kvm_vcpu_trap_get_class(vcpu);
 
