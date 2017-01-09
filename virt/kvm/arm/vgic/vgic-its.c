@@ -1761,13 +1761,84 @@ static int vgic_its_restore_device_tables(struct vgic_its *its)
 	return -ENXIO;
 }
 
+static int vgic_its_flush_cte(struct vgic_its *its,
+			      struct its_collection *collection, u64 *ptr)
+{
+	u64 val;
+	int ret;
+
+	val = ((u64)1 << 63 | ((u64)collection->target_addr << 16) |
+	       collection->collection_id);
+	val = cpu_to_le64(val);
+	ret = kvm_write_guest(its->dev->kvm, (gpa_t)ptr, &val, 8);
+	return ret;
+}
+
+static int vgic_its_restore_cte(struct vgic_its *its, u64 *ptr, bool *valid)
+{
+	struct its_collection *collection;
+	u32 target_addr;
+	u32 coll_id;
+	u64 val;
+	int ret;
+
+	*valid = false;
+
+	ret = kvm_read_guest(its->dev->kvm, (gpa_t)ptr, &val, 8);
+	if (ret)
+		return ret;
+	val = le64_to_cpu(val);
+	*valid = val & BIT_ULL(63);
+
+	if (!*valid)
+		return 0;
+
+	target_addr = (u32)(val >> 16);
+	coll_id = val & 0xFFFF;
+	ret = vgic_its_alloc_collection(its, &collection, coll_id);
+	if (ret)
+		return ret;
+	collection->target_addr = target_addr;
+	return 0;
+}
+
 /**
  * vgic_its_flush_collection_table - flush the collection table into
  * guest RAM
  */
 static int vgic_its_flush_collection_table(struct vgic_its *its)
 {
-	return -ENXIO;
+	struct its_collection *collection;
+	u64 val, *ptr;
+	size_t max_size, filled = 0;
+	int ret;
+
+	ptr = (u64 *)(BASER_ADDRESS(its->baser_coll_table));
+	if (!ptr)
+		return 0;
+
+	max_size = GITS_BASER_NR_PAGES(its->baser_coll_table) * SZ_64K;
+
+	list_for_each_entry(collection, &its->collection_list, coll_list) {
+		if (filled == max_size)
+			return -ENOSPC;
+		ret = vgic_its_flush_cte(its, collection, ptr);
+		if (ret)
+			return ret;
+		ptr++;
+		filled += 8;
+	}
+
+	if (filled == max_size)
+		return 0;
+
+	/*
+	 * table is not fully filled, add a last dummy element
+	 * with valid bit unset
+	 */
+	val = 0;
+	ret = kvm_write_guest(its->dev->kvm, (gpa_t)ptr, &val, 8);
+	return ret;
 }
 
 /**
@@ -1777,7 +1848,26 @@ static int vgic_its_flush_collection_table(struct vgic_its *its)
  */
 static int vgic_its_restore_collection_table(struct vgic_its *its)
 {
-	return -ENXIO;
+	size_t max_size, read = 0;
+	u64 *ptr;
+	int ret;
+
+	ptr = (u64 *)(BASER_ADDRESS(its->baser_coll_table));
+	if (!ptr)
+		return 0;
+
+	max_size = GITS_BASER_NR_PAGES(its->baser_coll_table) * SZ_64K;
+
+	while (read < max_size) {
+		bool valid;
+
+		ret = vgic_its_restore_cte(its, ptr, &valid);
+		if (!valid || ret)
+			break;
+		ptr++;
+		read += 8;
+	}
+	return ret;
 }
 
 /**
