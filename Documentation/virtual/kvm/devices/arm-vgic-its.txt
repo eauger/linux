@@ -36,3 +36,121 @@ Groups:
     -ENXIO:  ITS not properly configured as required prior to setting
              this attribute
     -ENOMEM: Memory shortage when allocating ITS internal data
+
+  KVM_DEV_ARM_VGIC_GRP_ITS_REGS
+  Attributes:
+      The attr field of kvm_device_attr encodes the offset of the
+      ITS register, relative to the ITS control frame base address
+      (ITS_base).
+
+      kvm_device_attr.addr points to a __u64 value whatever the width
+      of the addressed register (32/64 bits). 64 bit registers can only
+      be accessed with full length.
+
+      Writes to read-only registers are ignored by the kernel except for:
+      - GITS_READR. It needs to be restored otherwise commands in the queue
+        will be re-executed after CWRITER setting. Writing this register is
+        allowed if the ITS is not enabled (GITS_CTLR.enable = 0). Also it
+        needs to be restored after GITS_CBASER since a write to GITS_CBASER
+        resets GITS_CREADR.
+      - GITS_IIDR. Its Revision field encodes the table layout ABI revision.
+
+      For other registers, getting or setting a register has the same
+      effect as reading/writing the register on real hardware.
+  Errors:
+    -ENXIO: Offset does not correspond to any supported register
+    -EFAULT: Invalid user pointer for attr->addr
+    -EINVAL: Offset is not 64-bit aligned
+    -EBUSY: one or more VCPUS are running
+
+  KVM_DEV_ARM_VGIC_GRP_ITS_TABLES
+  Attributes
+       The attr field of kvm_device_attr must be zero.
+
+       request the flush-save/restore of the ITS tables, namely
+       the device table, the collection table, all the ITT tables,
+       the LPI pending tables. On save, the tables are flushed
+       into guest memory at the location provisioned by the guest
+       in GITS_BASER (device and collection tables), in the MAPD
+       command (ITT_addr), GICR_PENDBASERs (pending tables).
+
+       This means the GIC should be restored before the ITS and all
+       ITS registers but the GITS_CTLR must be restored before
+       restoring the ITS tables.
+
+       The GITS_READR and GITS_IIDR read-only registers must also
+       be restored before the table restore. The IIDR revision field
+       encodes the ABI revision of the table layout. If not set by
+       user space, the restoration of the tables will fail.
+
+       Note the LPI configuration table is read-only for the
+       in-kernel ITS and its save/restore goes through the standard
+       RAM save/restore.
+
+       The layout of the tables in guest memory defines an ABI.
+       The entries are laid in little endian format as follows;
+
+  Errors:
+    -EINVAL: kvm_device_attr not equal to 0, invalid table data
+    -EFAULT: invalid guest ram access
+    -EBUSY: one or more VCPUS are running
+
+    ITS Table ABI REV1:
+    -------------------
+
+    The device table and ITE are respectively indexed by device id and
+    eventid. The collection table however is not indexed by collection id:
+    CTE are written at the beginning of the buffer.
+
+    Device Table Entry (DTE) layout: entry size = 8 bytes
+
+    bits:     | 63| 62 ... 49 | 48 ... 5 | 4 ... 0 |
+    values:   | V |   next    | ITT_addr |  Size   |
+
+    where;
+    - V indicates whether the entry is valid,
+    - ITT_addr matches bits [51:8] of the ITT address (256B aligned),
+    - next field is meaningful only if the entry is valid.
+    It equals to 0 if this entry is the last one; otherwise it corresponds
+    to the minimum between the offset to the next device id and 2^14 -1.
+
+    Collection Table Entry (CTE) layout: entry size = 8 bytes
+
+    bits:     | 63| 62 ..  52  | 51 ... 16 | 15  ...   0 |
+    values:   | V |    RES0    |  RDBase   |    ICID     |
+
+    where:
+    - V indicates whether the entry is valid,
+    - RDBase matches the PE number (GICR_TYPER.Processor_Number),
+    - ICID matches the collection ID
+
+    Interrupt Translation Entry (ITE) layout: entry size = 8 bytes
+
+    bits:     | 63 ... 48 | 47 ... 16 | 15 ... 0 |
+    values:   |    next   |   pINTID  |  ICID    |
+
+    where:
+    - pINTID is the physical LPI ID,
+    - ICID is the collection ID,
+    - next field is meaningful only if the entry is valid (pINTID != 0).
+    It equals to 0 if this entry is the last one; otherwise it corresponds
+    to the minimum between the eventid offset to the next ITE and 2^16 -1.
+
+    LPI Pending Table layout:
+
+    As specified in the ARM Generic Interrupt Controller Architecture
+    Specification GIC Architecture version 3.0 and version 4. The first
+    1kB is not modified and therefore should contain zeroes.
+
+    Future evolutions of the ITS table layout:
+
+    At the moment the table layout is defined and optimized for physical
+    LPI support.
+
+    In the future we might implement direct injection of virtual LPIS.
+    This will require an upgrade of the table layout and an evolution of
+    the ABI. The ABI revision is encoded in the GITS_IIDR revision field.
+    That register must be restored before the table restoration, otherwise
+    the operation will fail.
+
+    ABI V1: GITS_IIDR.Revision = 1
