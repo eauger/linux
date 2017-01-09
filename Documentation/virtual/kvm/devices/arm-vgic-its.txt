@@ -36,3 +36,73 @@ Groups:
     -ENXIO:  ITS not properly configured as required prior to setting
              this attribute
     -ENOMEM: Memory shortage when allocating ITS internal data
+
+  KVM_DEV_ARM_VGIC_GRP_ITS_REGS
+  Attributes:
+      The attr field of kvm_device_attr encodes the offset of the
+      ITS register, relative to the ITS control frame base address
+      (ITS_base).
+
+      kvm_device_attr.addr points to a __u64 value whatever the width
+      of the addressed register (32/64 bits).
+
+      Writes to read-only registers are ignored by the kernel except
+      for a single register, GITS_READR. Normally this register is RO
+      but it needs to be restored otherwise commands in the queue will
+      be re-executed after CWRITER setting.
+
+      For other registers, Getting or setting a register has the same
+      effect as reading/writing the register on real hardware.
+  Errors:
+    -ENXIO: Offset does not correspond to any supported register
+    -EFAULT: Invalid user pointer for attr->addr
+    -EINVAL: Offset is not 64-bit aligned
+
+  KVM_DEV_ARM_VGIC_GRP_ITS_TABLES
+  Attributes
+       The attr field of kvm_device_attr is not used.
+
+       request the flush-save/restore of the ITS tables, namely
+       the device table, the collection table, all the ITT tables,
+       the LPI pending tables. On save, the tables are flushed
+       into guest memory at the location provisionned by the guest
+       in GITS_BASER (device and collection tables), on MAPD command
+       (ITT_addr), GICR_PENDBASERs (pending tables).
+
+       This means the GIC should be restored before the ITS and all
+       ITS registers but the GITS_CTRL must be restored before
+       restoring the ITS tables.
+
+       Note the LPI configuration table is read-only for the
+       in-kernel ITS and its save/restore goes through the standard
+       RAM save/restore.
+
+       The layout of the tables in guest memory defines an ABI.
+       The entries are laid out in memory as follows;
+
+    Device Table Entry (DTE) layout: entry size = 16 bytes
+
+    bits:     | 63   ...  32  | 31 ... 6 | 5 | 4   ...   0 |
+    values:   |   DeviceID    |   Resv   | V |    Size     |
+
+    bits:     | 63 ... 44 | 43  ...  0  |
+    values:   |    Resv   |  ITT_addr   |
+
+    Collection Table Entry (CTE) layout: entry size = 8 bytes
+
+    bits:     | 63| 62 ..  52  | 51 ... 16 | 15  ...   0 |
+    values:   | V |    RES0    |  RDBase   |    ICID     |
+
+    Interrupt Translation Table Entry (ITTE) layout: entry size = 16 bytes
+
+    bits:     | 63   ...  32  | 31 ... 17 | 16 | 15  ...  0 |
+    values:   |   DeviceID    |    RES0   | V  |    ICID    |
+
+    bits:     | 63 ...  32    | 31      ...        0 |
+    values:   |   pINTID      |        EventID       |
+
+    LPI Pending Table layout:
+
+    As specified in the ARM Generic Interrupt Controller Architecture
+    Specification GIC Architecture version 3.0 and version 4. The first
+    1kB contains only zeros.
