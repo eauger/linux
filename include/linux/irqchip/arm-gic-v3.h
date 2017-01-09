@@ -186,6 +186,7 @@
 #define GICR_PENDBASER_RaWaWb	GIC_BASER_CACHEABILITY(GICR_PENDBASER, INNER, RaWaWb)
 
 #define GICR_PENDBASER_PTZ				BIT_ULL(62)
+#define GICR_PENDBASER_ADDRESS(x)    ((x) & GENMASK_ULL(51, 16))
 
 /*
  * Re-Distributor registers, offsets from SGI_base
