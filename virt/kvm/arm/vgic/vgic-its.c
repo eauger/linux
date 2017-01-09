@@ -316,6 +316,29 @@ static u32 max_lpis_propbaser(u64 propbaser)
 	return 1U << min(nr_idbits, INTERRUPT_ID_BITS_ITS);
 }
 
+/**
+ * its_zero_pending_table_first1kB - Sets the first kB of the
+ * pending table to 0
+ * @vcpu: vcpu handle the pending table is attached to
+ *
+ * The content of the 1st kB is implementation defined. We force
+ * it to 0. Note the spec says it should already contain zeros on
+ * initial allocation and it must be visible to redist, else the
+ * behavior is unpredicatable
+ */
+static int its_zero_pending_table_first1kB(struct kvm_vcpu *vcpu)
+{
+	gpa_t pendbase = PENDBASER_ADDRESS(vcpu->arch.vgic_cpu.pendbaser);
+	u8 *tmp;
+	int ret;
+
+	tmp = kzalloc(1024, GFP_KERNEL);
+	ret = kvm_write_guest(vcpu->kvm, (gpa_t)pendbase, tmp, 1024);
+	kfree(tmp);
+
+	return ret;
+}
+
 /*
  * Scan the whole LPI pending table and sync the pending bit in there
  * with our own data structures. This relies on the LPI being
@@ -1399,6 +1422,8 @@ void vgic_enable_lpis(struct kvm_vcpu *vcpu)
 {
 	if (!(vcpu->arch.vgic_cpu.pendbaser & GICR_PENDBASER_PTZ))
 		its_sync_lpi_pending_table(vcpu);
+
+	its_zero_pending_table_first1kB(vcpu);
 }
 
 static int vgic_register_its_iodev(struct kvm *kvm, struct vgic_its *its)
@@ -1579,7 +1604,47 @@ int vgic_its_attr_regs_access(struct kvm_device *dev,
 static int vgic_its_flush_pending_tables(struct kvm *kvm,
 					 struct vgic_its *its)
 {
-	return -ENXIO;
+	struct vgic_dist *dist = &kvm->arch.vgic;
+	struct vgic_irq *irq;
+	int ret;
+
+	/**
+	 * we do not take the dist->lpi_list_lock this we have a garantee
+	 * the LPI list is not touched while the cmd and its lock are held
+	 */
+	list_for_each_entry(irq, &dist->lpi_list_head, lpi_list) {
+		struct kvm_vcpu *vcpu;
+		gpa_t pendbase, ptr;
+		bool stored;
+		u8 val;
+
+		vcpu = irq->target_vcpu;
+		if (!vcpu)
+			return -EINVAL;
+
+		pendbase = PENDBASER_ADDRESS(vcpu->arch.vgic_cpu.pendbaser);
+
+		ptr = pendbase + (irq->intid / BITS_PER_BYTE);
+
+		ret = kvm_read_guest(kvm, (gpa_t)ptr, &val, 1);
+		if (ret)
+			return ret;
+
+		stored = val & (irq->intid % BITS_PER_BYTE);
+		if (stored == irq->pending)
+			continue;
+
+		if (irq->pending)
+			val |= 1 << (irq->intid % BITS_PER_BYTE);
+		else
+			val &= ~(1 << (irq->intid % BITS_PER_BYTE));
+
+		ret = kvm_write_guest(kvm, (gpa_t)ptr, &val, 1);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 /**
@@ -1589,7 +1654,32 @@ static int vgic_its_flush_pending_tables(struct kvm *kvm,
 static int vgic_its_restore_pending_tables(struct kvm *kvm,
 					   struct vgic_its *its)
 {
-	return -ENXIO;
+	struct vgic_irq *irq;
+	struct vgic_dist *dist = &kvm->arch.vgic;
+	int ret;
+
+	list_for_each_entry(irq, &dist->lpi_list_head, lpi_list) {
+		struct kvm_vcpu *vcpu;
+		gpa_t pendbase, ptr;
+		u8 val;
+
+		vcpu = irq->target_vcpu;
+		if (!vcpu)
+			return -EINVAL;
+
+		if (!(vcpu->arch.vgic_cpu.pendbaser & GICR_PENDBASER_PTZ))
+			return 0;
+
+		pendbase = PENDBASER_ADDRESS(vcpu->arch.vgic_cpu.pendbaser);
+
+		ptr = pendbase + (irq->intid / BITS_PER_BYTE);
+
+		ret = kvm_read_guest(kvm, (gpa_t)ptr, &val, 1);
+		if (ret)
+			return ret;
+		irq->pending = val & (1 << (irq->intid % BITS_PER_BYTE));
+	}
+	return 0;
 }
 
 static int vgic_its_flush_itt(struct kvm *kvm, struct its_device *device)
