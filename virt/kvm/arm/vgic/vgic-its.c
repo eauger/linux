@@ -1682,7 +1682,8 @@ out:
 	return ret;
 }
 
-u32 compute_next_devid_offset(struct list_head *h, struct its_device *dev)
+static u32 compute_next_devid_offset(struct list_head *h,
+				     struct its_device *dev)
 {
 	struct list_head *e = &dev->dev_list;
 	struct its_device *next;
@@ -1858,7 +1859,7 @@ static int vgic_its_ite_cmp(void *priv, struct list_head *a,
 		return 1;
 }
 
-int vgic_its_save_itt(struct vgic_its *its, struct its_device *device)
+static int vgic_its_save_itt(struct vgic_its *its, struct its_device *device)
 {
 	const struct vgic_its_abi *abi = vgic_its_get_abi(its);
 	gpa_t base = device->itt_addr;
@@ -1877,7 +1878,7 @@ int vgic_its_save_itt(struct vgic_its *its, struct its_device *device)
 	return 0;
 }
 
-int vgic_its_restore_itt(struct vgic_its *its, struct its_device *dev)
+static int vgic_its_restore_itt(struct vgic_its *its, struct its_device *dev)
 {
 	const struct vgic_its_abi *abi = vgic_its_get_abi(its);
 	gpa_t base = dev->itt_addr;
@@ -1895,12 +1896,161 @@ int vgic_its_restore_itt(struct vgic_its *its, struct its_device *dev)
 }
 
 /**
+ * vgic_its_save_dte - Save a device table entry at a given GPA
+ *
+ * @its: ITS handle
+ * @dev: ITS device
+ * @ptr: GPA
+ */
+static int vgic_its_save_dte(struct vgic_its *its, struct its_device *dev,
+			     gpa_t ptr, int dte_esz)
+{
+	struct kvm *kvm = its->dev->kvm;
+	u64 val, itt_addr_field;
+	int ret;
+	u32 next_offset;
+
+	itt_addr_field = dev->itt_addr >> 8;
+	next_offset = compute_next_devid_offset(&its->device_list, dev);
+	val = (1ULL << KVM_ITS_DTE_VALID_SHIFT |
+	       ((u64)next_offset << KVM_ITS_DTE_NEXT_SHIFT) |
+	       (itt_addr_field << KVM_ITS_DTE_ITTADDR_SHIFT) |
+		(dev->nb_eventid_bits - 1));
+	val = cpu_to_le64(val);
+	ret = kvm_write_guest(kvm, ptr, &val, dte_esz);
+	return ret;
+}
+
+/**
+ * vgic_its_restore_dte - restore a device table entry
+ *
+ * @its: its handle
+ * @id: device id the DTE corresponds to
+ * @ptr: kernel VA where the 8 byte DTE is located
+ * @opaque: unused
+ * @next: offset to the next valid device id
+ *
+ * Return: < 0 on error, 0 otherwise
+ */
+static int vgic_its_restore_dte(struct vgic_its *its, u32 id,
+				void *ptr, void *opaque, u32 *next)
+{
+	struct its_device *dev;
+	gpa_t itt_addr;
+	u8 nb_eventid_bits;
+	u64 entry = *(u64 *)ptr;
+	bool valid;
+	int ret;
+
+	entry = le64_to_cpu(entry);
+
+	valid = entry >> KVM_ITS_DTE_VALID_SHIFT;
+	nb_eventid_bits = (entry & KVM_ITS_DTE_SIZE_MASK) + 1;
+	itt_addr = ((entry & KVM_ITS_DTE_ITTADDR_MASK)
+			>> KVM_ITS_DTE_ITTADDR_SHIFT) << 8;
+	*next = 1;
+
+	if (!valid)
+		return 0;
+
+	/* dte entry is valid */
+	*next = (entry & KVM_ITS_DTE_NEXT_MASK) >> KVM_ITS_DTE_NEXT_SHIFT;
+
+	ret = vgic_its_alloc_device(its, &dev, id,
+				    itt_addr, nb_eventid_bits);
+	if (ret)
+		return ret;
+	ret = vgic_its_restore_itt(its, dev);
+
+	return ret;
+}
+
+static int vgic_its_device_cmp(void *priv, struct list_head *a,
+			       struct list_head *b)
+{
+	struct its_device *deva = container_of(a, struct its_device, dev_list);
+	struct its_device *devb = container_of(b, struct its_device, dev_list);
+
+	if (deva->device_id < devb->device_id)
+		return -1;
+	else
+		return 1;
+}
+
+/**
  * vgic_its_save_device_tables - Save the device table and all ITT
  * into guest RAM
+ *
+ * L1/L2 handling is hidden by vgic_its_check_id() helper which directly
+ * returns the GPA of the device entry
  */
 static int vgic_its_save_device_tables(struct vgic_its *its)
 {
-	return -ENXIO;
+	const struct vgic_its_abi *abi = vgic_its_get_abi(its);
+	struct its_device *dev;
+	int dte_esz = abi->dte_esz;
+	u64 baser;
+
+	baser = its->baser_device_table;
+
+	list_sort(NULL, &its->device_list, vgic_its_device_cmp);
+
+	list_for_each_entry(dev, &its->device_list, dev_list) {
+		int ret;
+		gpa_t eaddr;
+
+		if (!vgic_its_check_id(its, baser,
+				       dev->device_id, &eaddr))
+			return -EINVAL;
+
+		ret = vgic_its_save_itt(its, dev);
+		if (ret)
+			return ret;
+
+		ret = vgic_its_save_dte(its, dev, eaddr, dte_esz);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
+/**
+ * handle_l1_entry - callback used for L1 entries (2 stage case)
+ *
+ * @its: its handle
+ * @id: id
+ * @addr: kernel VA
+ * @opaque: unused
+ * @next_offset: offset to the next L1 entry: 0 if the last element
+ * was found, 1 otherwise
+ */
+static int handle_l1_entry(struct vgic_its *its, u32 id, void *addr,
+			   void *opaque, u32 *next_offset)
+{
+	const struct vgic_its_abi *abi = vgic_its_get_abi(its);
+	int l2_start_id = id * (SZ_64K / GITS_LVL1_ENTRY_SIZE);
+	u64 entry = *(u64 *)addr;
+	int ret, ite_esz = abi->ite_esz;
+	gpa_t gpa;
+
+	entry = le64_to_cpu(entry);
+	*next_offset = 1;
+
+	if (!(entry & BIT_ULL(63)))
+		return 0;
+
+	gpa = entry & GENMASK_ULL(51, 16);
+
+	ret = lookup_table(its, gpa, SZ_64K, ite_esz,
+			   l2_start_id, vgic_its_restore_dte, NULL);
+
+	if (ret == 1) {
+		/* last entry was found in this L2 table */
+		*next_offset = 0;
+		ret = 0;
+	}
+
+	return ret;
 }
 
 /**
@@ -1909,7 +2059,30 @@ static int vgic_its_save_device_tables(struct vgic_its *its)
  */
 static int vgic_its_restore_device_tables(struct vgic_its *its)
 {
-	return -ENXIO;
+	const struct vgic_its_abi *abi = vgic_its_get_abi(its);
+	u64 baser = its->baser_device_table;
+	int l1_esz, ret, l1_tbl_size = GITS_BASER_NR_PAGES(baser) * SZ_64K;
+	gpa_t l1_gpa;
+
+	l1_gpa = BASER_ADDRESS(baser);
+	if (!l1_gpa)
+		return 0;
+
+	if (baser & GITS_BASER_INDIRECT) {
+		l1_esz = 8;
+		ret = lookup_table(its, l1_gpa, l1_tbl_size, l1_esz, 0,
+				   handle_l1_entry, NULL);
+	} else {
+		l1_esz = abi->dte_esz;
+		ret = lookup_table(its, l1_gpa, l1_tbl_size, l1_esz, 0,
+				   vgic_its_restore_dte, NULL);
+	}
+
+	if (ret < 0)
+		return ret;
+
+	/* if last element was not found we have an issue here */
+	return ret ? 0 : -EINVAL;
 }
 
 static int vgic_its_save_cte(struct vgic_its *its,
