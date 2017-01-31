@@ -1707,7 +1707,7 @@ u32 compute_next_devid_offset(struct list_head *h, struct its_device *dev)
 	return min_t(u32, next_offset, VITS_DTE_MAX_DEVID_OFFSET);
 }
 
-u32 compute_next_eventid_offset(struct list_head *h, struct its_ite *ite)
+static u32 compute_next_eventid_offset(struct list_head *h, struct its_ite *ite)
 {
 	struct list_head *e = &ite->ite_list;
 	struct its_ite *next;
@@ -1749,8 +1749,8 @@ typedef int (*entry_fn_t)(struct vgic_its *its, u32 id, void *addr,
  *
  * Return: < 0 on error, 1 if last element identified, 0 otherwise
  */
-int lookup_table(struct vgic_its *its, gpa_t base, int size, int esz,
-		 int start_id, entry_fn_t fn, void *opaque)
+static int lookup_table(struct vgic_its *its, gpa_t base, int size, int esz,
+			int start_id, entry_fn_t fn, void *opaque)
 {
 	gpa_t gpa = base, top = base + size - 1;
 	unsigned long len = size;
@@ -1813,6 +1813,107 @@ static int vgic_its_flush_pending_tables(struct kvm *kvm)
 static int vgic_its_restore_pending_tables(struct kvm *kvm)
 {
 	return -ENXIO;
+}
+
+static int vgic_its_flush_ite(struct vgic_its *its, struct its_device *dev,
+			      struct its_ite *ite, gpa_t gpa)
+{
+	struct kvm *kvm = its->dev->kvm;
+	u32 next_offset;
+	u64 val;
+
+	next_offset = compute_next_eventid_offset(&dev->itt_head, ite);
+	val = ((u64)next_offset << 48) | ((u64)ite->lpi << 16) |
+		ite->collection->collection_id;
+	val = cpu_to_le64(val);
+	return kvm_write_guest(kvm, gpa, &val, VITS_ESZ);
+}
+
+/**
+ * vgic_its_restore_ite - restore an interrupt translation entry
+ * @event_id: id used for indexing
+ * @ptr: kernel VA where the 8 byte ITE is located
+ * @opaque: pointer to the its_device
+ * @next: id offset to the next entry
+ */
+static int vgic_its_restore_ite(struct vgic_its *its, u32 event_id,
+				void *ptr, void *opaque, u32 *next)
+{
+	struct its_device *dev = (struct its_device *)opaque;
+	struct its_collection *collection;
+	struct kvm *kvm = its->dev->kvm;
+	u64 val, *p = (u64 *)ptr;
+	struct vgic_irq *irq;
+	u32 coll_id, lpi_id;
+	struct its_ite *ite;
+	int ret;
+
+	val = *p;
+	*next = 1;
+
+	val = le64_to_cpu(val);
+
+	coll_id = val & GENMASK_ULL(15, 0);
+	lpi_id = (val & GENMASK_ULL(47, 16)) >> 16;
+
+	if (!lpi_id)
+		return 0;
+
+	*next = val >> 48;
+
+	collection = find_collection(its, coll_id);
+	if (!collection)
+		return -EINVAL;
+
+	ret = vgic_its_alloc_ite(dev, &ite, collection,
+				  lpi_id, event_id);
+	if (ret)
+		return ret;
+
+	irq = vgic_add_lpi(kvm, lpi_id);
+	if (IS_ERR(irq))
+		return PTR_ERR(irq);
+	ite->irq = irq;
+
+	/* restore the configuration of the LPI */
+	ret = update_lpi_config(kvm, irq, NULL);
+	if (ret)
+		return ret;
+
+	update_affinity_ite(kvm, ite);
+	return 0;
+}
+
+int vgic_its_flush_itt(struct vgic_its *its, struct its_device *device)
+{
+	gpa_t base = device->itt_addr;
+	struct its_ite *ite;
+	int ret;
+
+	list_for_each_entry(ite, &device->itt_head, ite_list) {
+		gpa_t gpa = base + ite->event_id * VITS_ESZ;
+
+		ret = vgic_its_flush_ite(its, device, ite, gpa);
+		if (ret)
+			return ret;
+	}
+	return 0;
+}
+
+int vgic_its_restore_itt(struct vgic_its *its, struct its_device *dev)
+{
+	size_t max_size = BIT_ULL(dev->nb_eventid_bits) * VITS_ESZ;
+	gpa_t base = dev->itt_addr;
+	int ret;
+
+	ret =  lookup_table(its, base, max_size, VITS_ESZ, 0,
+			    vgic_its_restore_ite, dev);
+
+	if (ret < 0)
+		return ret;
+
+	/* if the last element has not been found we are in trouble */
+	return ret ? 0 : -EINVAL;
 }
 
 /**
