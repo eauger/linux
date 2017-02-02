@@ -180,6 +180,7 @@ static struct its_ite *find_ite(struct vgic_its *its, u32 device_id,
 
 #define VITS_ESZ 8
 #define VITS_TYPER_IDBITS 0xF
+#define VITS_TYPER_DEVBITS 0xF
 
 /*
  * Finds and returns a collection in the ITS collection table.
@@ -402,7 +403,7 @@ static unsigned long vgic_mmio_read_its_typer(struct kvm *kvm,
 	 * To avoid memory waste in the guest, we keep the number of IDBits and
 	 * DevBits low - as least for the time being.
 	 */
-	reg |= 0x0f << GITS_TYPER_DEVBITS_SHIFT;
+	reg |= VITS_TYPER_DEVBITS << GITS_TYPER_DEVBITS_SHIFT;
 	reg |= VITS_TYPER_IDBITS << GITS_TYPER_IDBITS_SHIFT;
 	reg |= (VITS_ESZ - 1) << GITS_TYPER_ITT_ENTRY_SIZE_SHIFT;
 
@@ -631,7 +632,7 @@ static int vgic_its_cmd_handle_movi(struct kvm *kvm, struct vgic_its *its,
  * Check whether an ID can be stored into the corresponding guest table.
  * For a direct table this is pretty easy, but gets a bit nasty for
  * indirect tables. We check whether the resulting guest physical address
- * is actually valid (covered by a memslot and guest accessbible).
+ * is actually valid (covered by a memslot and guest accessible).
  * For this we have to read the respective first level entry.
  */
 static bool vgic_its_check_id(struct vgic_its *its, u64 baser, int id)
@@ -641,6 +642,9 @@ static bool vgic_its_check_id(struct vgic_its *its, u64 baser, int id)
 	u64 indirect_ptr;
 	gfn_t gfn;
 	int esz = GITS_BASER_ENTRY_SIZE(baser);
+
+	if (id >= (2 << (VITS_TYPER_DEVBITS + 1)))
+		return false;
 
 	if (!(baser & GITS_BASER_INDIRECT)) {
 		phys_addr_t addr;
