@@ -2925,20 +2925,22 @@ int ata_bus_probe(struct ata_port *ap)
  */
 static void sata_print_link_status(struct ata_link *link)
 {
-	u32 sstatus, scontrol, tmp;
+	u32 sstatus, scontrol /*, tmp*/;
 
 	if (sata_scr_read(link, SCR_STATUS, &sstatus))
 		return;
 	sata_scr_read(link, SCR_CONTROL, &scontrol);
 
+#if 0
 	if (ata_phys_link_online(link)) {
 		tmp = (sstatus >> 4) & 0xf;
-		ata_link_info(link, "SATA link up %s (SStatus %X SControl %X)\n",
-			      sata_spd_string(tmp), sstatus, scontrol);
+		//ata_link_info(link, "*** %s SATA link up %s (SStatus %X SControl %X)\n", __func__, 
+		//	      sata_spd_string(tmp), sstatus, scontrol);
 	} else {
-		ata_link_info(link, "SATA link down (SStatus %X SControl %X)\n",
-			      sstatus, scontrol);
+		//ata_link_info(link, "*** %s SATA link down (SStatus %X SControl %X)\n", __func__, 
+		//	      sstatus, scontrol);
 	}
+#endif
 }
 
 /**
@@ -3026,8 +3028,8 @@ int sata_down_spd_limit(struct ata_link *link, u32 spd_limit)
 
 	link->sata_spd_limit = mask;
 
-	ata_link_warn(link, "limiting SATA link speed to %s\n",
-		      sata_spd_string(fls(mask)));
+	//ata_link_warn(link, "*** %s limiting SATA link speed to %s\n",
+	//	      __func__, sata_spd_string(fls(mask)));
 
 	return 0;
 }
