@@ -820,8 +820,8 @@ void ata_scsi_port_error_handler(struct Scsi_Host *host, struct ata_port *ap)
 	else if (ap->pflags & ATA_PFLAG_SCSI_HOTPLUG)
 		schedule_delayed_work(&ap->hotplug_task, 0);
 
-	if (ap->pflags & ATA_PFLAG_RECOVERED)
-		ata_port_info(ap, "EH complete\n");
+	//if (ap->pflags & ATA_PFLAG_RECOVERED)
+	//	ata_port_info(ap, "*** %s EH complete\n", __func__);
 
 	ap->pflags &= ~(ATA_PFLAG_SCSI_HOTPLUG | ATA_PFLAG_RECOVERED);
 
@@ -2551,27 +2551,30 @@ static void ata_eh_link_report(struct ata_link *link)
 	if (ap->eh_tries < ATA_EH_MAX_TRIES)
 		snprintf(tries_buf, sizeof(tries_buf), " t%d",
 			 ap->eh_tries);
-
+#if 0
 	if (ehc->i.dev) {
-		ata_dev_err(ehc->i.dev, "exception Emask 0x%x "
+		ata_dev_err(ehc->i.dev, "*** %s exception Emask 0x%x "
 			    "SAct 0x%x SErr 0x%x action 0x%x%s%s\n",
+				__func__, 
 			    ehc->i.err_mask, link->sactive, ehc->i.serror,
 			    ehc->i.action, frozen, tries_buf);
 		if (desc)
 			ata_dev_err(ehc->i.dev, "%s\n", desc);
 	} else {
-		ata_link_err(link, "exception Emask 0x%x "
-			     "SAct 0x%x SErr 0x%x action 0x%x%s%s\n",
+		ata_link_err(link, "*** %s exception Emask 0x%x "
+			     "SAct 0x%x SErr 0x%x action 0x%x%s%s\n", __func__,
 			     ehc->i.err_mask, link->sactive, ehc->i.serror,
 			     ehc->i.action, frozen, tries_buf);
 		if (desc)
 			ata_link_err(link, "%s\n", desc);
 	}
+#endif
 
-#ifdef CONFIG_ATA_VERBOSE_ERROR
+#if 0 /* ifdef CONFIG_ATA_VERBOSE_ERROR */
 	if (ehc->i.serror)
 		ata_link_err(link,
-		  "SError: { %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s}\n",
+		  "*** %s SError: { %s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s}\n",
+		  __func__, 
 		  ehc->i.serror & SERR_DATA_RECOVERED ? "RecovData " : "",
 		  ehc->i.serror & SERR_COMM_RECOVERED ? "RecovComm " : "",
 		  ehc->i.serror & SERR_DATA ? "UnrecovData " : "",
@@ -2888,9 +2891,9 @@ int ata_eh_reset(struct ata_link *link, int classify,
 	deadline = ata_deadline(jiffies, ata_eh_reset_timeouts[try++]);
 
 	if (reset) {
-		if (verbose)
-			ata_link_info(link, "%s resetting link\n",
-				      reset == softreset ? "soft" : "hard");
+		if (0 /* verbose */)
+			ata_link_info(link, "*** %s %s resetting link\n",
+				      __func__, reset == softreset ? "soft" : "hard");
 
 		/* mark that this EH session started with reset */
 		ehc->last_reset = jiffies;
@@ -2909,8 +2912,8 @@ int ata_eh_reset(struct ata_link *link, int classify,
 		if (slave && reset == hardreset) {
 			int tmp;
 
-			if (verbose)
-				ata_link_info(slave, "hard resetting link\n");
+			if (0 /* verbose */)
+				ata_link_info(slave, "*** %s hard resetting link\n", __func__);
 
 			ata_eh_about_to_do(slave, NULL, ATA_EH_RESET);
 			tmp = ata_do_reset(slave, reset, classes, deadline,

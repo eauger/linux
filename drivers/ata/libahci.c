@@ -1711,7 +1711,7 @@ static void ahci_error_intr(struct ata_port *ap, u32 irq_stat)
 
 	/* record irq stat */
 	ata_ehi_clear_desc(host_ehi);
-	ata_ehi_push_desc(host_ehi, "irq_stat 0x%08x", irq_stat);
+	//ata_ehi_push_desc(host_ehi, "*** %s irq_stat 0x%08x", __func__, irq_stat);
 
 	/* AHCI needs SError cleared; otherwise, it might lock up */
 	ahci_scr_read(&ap->link, SCR_ERROR, &serror);
