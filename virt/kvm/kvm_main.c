@@ -1738,14 +1738,6 @@ void kvm_get_pfn(kvm_pfn_t pfn)
 }
 EXPORT_SYMBOL_GPL(kvm_get_pfn);
 
-static int next_segment(unsigned long len, int offset)
-{
-	if (len > PAGE_SIZE - offset)
-		return PAGE_SIZE - offset;
-	else
-		return len;
-}
-
 static int __kvm_read_guest_page(struct kvm_memory_slot *slot, gfn_t gfn,
 				 void *data, int offset, int len)
 {
