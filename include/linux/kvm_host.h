@@ -92,6 +92,14 @@ static inline bool is_noslot_pfn(kvm_pfn_t pfn)
 	return pfn == KVM_PFN_NOSLOT;
 }
 
+static inline int next_segment(unsigned long len, int offset)
+{
+	if (len > PAGE_SIZE - offset)
+		return PAGE_SIZE - offset;
+	else
+		return len;
+}
+
 /*
  * architectures with KVM_HVA_ERR_BAD other than PAGE_OFFSET (e.g. s390)
  * provide own defines and kvm_is_error_hva
