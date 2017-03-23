@@ -162,6 +162,8 @@ struct vgic_its {
 	u32			creadr;
 	u32			cwriter;
 
+	u32			user_revision;
+
 	/* Protects the device and collection lists */
 	struct mutex		its_lock;
 	struct list_head	device_list;
