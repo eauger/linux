@@ -1673,6 +1673,48 @@ static int vfio_domains_have_iommu_cache(struct vfio_iommu *iommu)
 	return ret;
 }
 
+struct vfio_iommu_task {
+	struct iommu_domain *domain;
+	void *payload;
+};
+
+static int bind_guest_stage_fn(struct device *dev, void *data)
+{
+	struct vfio_iommu_type1_bind_guest_stage *ustruct;
+	struct vfio_iommu_task *task = data;
+
+	ustruct = task->payload;
+	return iommu_bind_guest_stage(task->domain, dev, &ustruct->config);
+}
+
+static int vfio_iommu_dispatch_task(struct vfio_iommu *iommu, void *data,
+				    int (*fn)(struct device *, void *))
+{
+	int ret = 0;
+	struct vfio_domain *d;
+	struct vfio_group *g;
+	struct vfio_iommu_task task;
+
+	task.payload = data;
+
+	mutex_lock(&iommu->lock);
+
+	list_for_each_entry(d, &iommu->domain_list, next) {
+		list_for_each_entry(g, &d->group_list, next) {
+			if (g->iommu_group != NULL) {
+				task.domain = d->domain;
+				ret = iommu_group_for_each_dev(
+					g->iommu_group, &task, fn);
+				if (ret != 0)
+					break;
+			}
+		}
+	}
+
+	mutex_unlock(&iommu->lock);
+	return ret;
+}
+
 static long vfio_iommu_type1_ioctl(void *iommu_data,
 				   unsigned int cmd, unsigned long arg)
 {
@@ -1743,6 +1785,20 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 
 		return copy_to_user((void __user *)arg, &unmap, minsz) ?
 			-EFAULT : 0;
+	} else if (cmd == VFIO_IOMMU_BIND_GUEST_STAGE) {
+		struct vfio_iommu_type1_bind_guest_stage ustruct;
+
+		minsz = offsetofend(struct vfio_iommu_type1_bind_guest_stage,
+				    config);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		return vfio_iommu_dispatch_task(iommu, (u8 *)&ustruct,
+						bind_guest_stage_fn);
 	}
 
 	return -ENOTTY;
