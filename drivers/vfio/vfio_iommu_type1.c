@@ -2785,6 +2785,39 @@ static int vfio_iommu_iova_build_caps(struct vfio_iommu *iommu,
 	return ret;
 }
 
+static void
+vfio_detach_pasid_table(struct vfio_iommu *iommu)
+{
+	struct vfio_domain *d;
+
+	mutex_lock(&iommu->lock);
+	list_for_each_entry(d, &iommu->domain_list, next)
+		iommu_detach_pasid_table(d->domain);
+
+	mutex_unlock(&iommu->lock);
+}
+
+static int
+vfio_attach_pasid_table(struct vfio_iommu *iommu, unsigned long arg)
+{
+	struct vfio_domain *d;
+	int ret = 0;
+
+	mutex_lock(&iommu->lock);
+
+	list_for_each_entry(d, &iommu->domain_list, next) {
+		ret = iommu_uapi_attach_pasid_table(d->domain, (void __user *)arg);
+		if (ret) {
+			list_for_each_entry_continue_reverse(d, &iommu->domain_list, next)
+				iommu_detach_pasid_table(d->domain);
+			break;
+		}
+	}
+
+	mutex_unlock(&iommu->lock);
+	return ret;
+}
+
 static int vfio_iommu_migration_build_caps(struct vfio_iommu *iommu,
 					   struct vfio_info_cap *caps)
 {
@@ -2943,6 +2976,29 @@ static int vfio_iommu_type1_unmap_dma(struct vfio_iommu *iommu,
 
 	return copy_to_user((void __user *)arg, &unmap, minsz) ?
 			-EFAULT : 0;
+}
+
+static int vfio_iommu_type1_set_pasid_table(struct vfio_iommu *iommu,
+					    unsigned long arg)
+{
+	struct vfio_iommu_type1_set_pasid_table spt;
+	unsigned long minsz;
+
+	minsz = offsetofend(struct vfio_iommu_type1_set_pasid_table, flags);
+
+	if (copy_from_user(&spt, (void __user *)arg, minsz))
+		return -EFAULT;
+
+	if (spt.argsz < minsz)
+		return -EINVAL;
+
+	if (spt.flags == VFIO_PASID_TABLE_FLAG_SET) {
+		return vfio_attach_pasid_table(iommu, arg + minsz);
+	} else if (spt.flags == VFIO_PASID_TABLE_FLAG_UNSET) {
+		vfio_detach_pasid_table(iommu);
+		return 0;
+	}
+	return -EINVAL;
 }
 
 static int vfio_iommu_type1_dirty_pages(struct vfio_iommu *iommu,
@@ -3206,6 +3262,8 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		return vfio_iommu_type1_bind(iommu, arg);
 	case VFIO_IOMMU_UNBIND:
 		return vfio_iommu_type1_unbind(iommu, arg);
+	case VFIO_IOMMU_SET_PASID_TABLE:
+		return vfio_iommu_type1_set_pasid_table(iommu, arg);
 	default:
 		return -ENOTTY;
 	}
