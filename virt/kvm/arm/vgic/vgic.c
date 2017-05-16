@@ -17,6 +17,8 @@
 #include <linux/kvm.h>
 #include <linux/kvm_host.h>
 #include <linux/list_sort.h>
+#include <linux/interrupt.h>
+#include <linux/irq.h>
 
 #include "vgic.h"
 
@@ -769,5 +771,108 @@ bool kvm_vgic_map_is_active(struct kvm_vcpu *vcpu, unsigned int virt_irq)
 	vgic_put_irq(vcpu->kvm, irq);
 
 	return map_is_active;
+}
+
+/**
+ * kvm_vgic_set_forwarding - Set IRQ forwarding
+ *
+ * @kvm: kvm handle
+ * @host_irq: the host linux IRQ
+ * @vintid: the virtual INTID
+ *
+ * This function must be called when the IRQ is not active:
+ * ie. not active at GIC level and not currently under injection
+ * into the guest using the unforwarded mode. The physical IRQ must
+ * be disabled and all vCPUs must have been exited and prevented
+ * from being re-entered.
+ */
+int kvm_vgic_set_forwarding(struct kvm *kvm, unsigned int host_irq,
+			    unsigned int vintid)
+{
+	struct kvm_vcpu *vcpu;
+	struct vgic_irq *irq;
+	struct irq_desc *desc;
+	struct irq_data *data;
+	unsigned int pintid;
+	int ret = 0;
+
+
+	kvm_debug("%s host linux irq=%d vintid=%d\n",
+		  __func__, host_irq, vintid);
+
+	if (!vgic_valid_spi(kvm, vintid))
+		return 0;
+
+	/* find the INTID corresponding to @host_irq */
+	desc = irq_to_desc(host_irq);
+	if (!desc) {
+		kvm_err("%s: no interrupt descriptor\n", __func__);
+		return -EINVAL;
+	}
+
+	data = irq_desc_get_irq_data(desc);
+	while (data->parent_data)
+		data = data->parent_data;
+
+	pintid = data->hwirq;
+
+	irq = vgic_get_irq(kvm, NULL, vintid);
+
+	spin_lock(&irq->irq_lock);
+
+	vcpu = irq->target_vcpu;
+
+	if (!vcpu) {
+		ret = -EAGAIN;
+		goto unlock;
+	}
+
+	irq_set_vcpu_affinity(host_irq, vcpu);
+
+	irq->hw = true;
+	irq->hwintid = pintid;
+	irq->host_irq = host_irq;
+
+unlock:
+	spin_unlock(&irq->irq_lock);
+	vgic_put_irq(kvm, irq);
+	return ret;
+}
+
+/**
+ * kvm_vgic_unset_forwarding - Unset IRQ forwarding
+ *
+ * @kvm: KVM handle
+ * @host_irq: the host Linux IRQ number
+ * @vintid: virtual INTID
+ *
+ * This function must be called when the host irq is disabled and
+ * all vCPUs have been exited and prevented from being re-entered.
+ */
+void kvm_vgic_unset_forwarding(struct kvm *kvm,
+			       unsigned int host_irq,
+			       unsigned int vintid)
+{
+	struct vgic_irq *irq;
+	bool active;
+
+	kvm_debug("%s host_irq=%d virt_irq=%d\n", __func__, host_irq, vintid);
+
+	irq_get_irqchip_state(host_irq, IRQCHIP_STATE_ACTIVE, &active);
+
+	irq = vgic_get_irq(kvm, NULL, vintid);
+	spin_lock(&irq->irq_lock);
+
+	if (!is_unshared_mapped(irq))
+		goto unlock;
+
+	if (active)
+		irq_set_irqchip_state(host_irq, IRQCHIP_STATE_ACTIVE, false);
+
+	irq->hw = false;
+	irq_set_vcpu_affinity(host_irq, NULL);
+
+unlock:
+	spin_unlock(&irq->irq_lock);
 }
 
