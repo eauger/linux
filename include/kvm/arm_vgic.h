@@ -343,4 +343,9 @@ int kvm_send_userspace_msi(struct kvm *kvm, struct kvm_msi *msi);
  */
 int kvm_vgic_setup_default_irq_routing(struct kvm *kvm);
 
+int kvm_vgic_set_forwarding(struct kvm *kvm, unsigned int host_irq,
+			    unsigned int vintid);
+void kvm_vgic_unset_forwarding(struct kvm *kvm, unsigned int host_irq,
+			       unsigned int vintid);
+
 #endif /* __KVM_ARM_VGIC_H */
