@@ -15,6 +15,7 @@
 #include <linux/pci.h>
 #include <linux/irqbypass.h>
 #include <linux/types.h>
+#include <linux/vfio.h>
 
 #ifndef VFIO_PCI_PRIVATE_H
 #define VFIO_PCI_PRIVATE_H
@@ -133,6 +134,10 @@ extern int vfio_pci_register_dev_region(struct vfio_pci_device *vdev,
 					unsigned int type, unsigned int subtype,
 					const struct vfio_pci_regops *ops,
 					size_t size, u32 flags, void *data);
+
+extern int vfio_pci_set_deoi(struct vfio_pci_device *vdev,
+			     struct vfio_pci_irq_ctx *irq_ctx, bool deoi);
+
 #ifdef CONFIG_VFIO_PCI_IGD
 extern int vfio_pci_igd_init(struct vfio_pci_device *vdev);
 #else
@@ -141,4 +146,31 @@ static inline int vfio_pci_igd_init(struct vfio_pci_device *vdev)
 	return -ENODEV;
 }
 #endif
+
+#ifdef CONFIG_VFIO_PCI_IRQ_BYPASS_DEOI
+/*
+ * Architecture specific irqbypass producer callbacks
+ */
+bool vfio_pci_has_deoi(void);
+void vfio_pci_register_deoi_producer(struct vfio_pci_device *vdev,
+				     struct vfio_pci_irq_ctx *irq_ctx,
+				     struct eventfd_ctx *trigger,
+				     unsigned int irq);
+#else
+static inline bool vfio_pci_has_deoi(void)
+{
+	return false;
+}
+static inline
+void vfio_pci_register_deoi_producer(struct vfio_pci_device *vdev,
+				     struct vfio_pci_irq_ctx *irq_ctx,
+				     struct eventfd_ctx *trigger,
+				     unsigned int irq) {}
+#endif
+
+void vfio_pci_register_default_producer(struct vfio_pci_device *vdev,
+					struct vfio_pci_irq_ctx *irq_ctx,
+					struct eventfd_ctx *trigger,
+					unsigned int irq);
+
 #endif /* VFIO_PCI_PRIVATE_H */

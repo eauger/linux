@@ -161,6 +161,23 @@ static irqreturn_t vfio_intx_wrapper_handler(int irq, void *dev_id)
 	return ret;
 }
 
+/* must be called with vdev->irqlock held */
+int vfio_pci_set_deoi(struct vfio_pci_device *vdev,
+		      struct vfio_pci_irq_ctx *irq_ctx, bool deoi)
+{
+	if (!is_intx(vdev))
+		return -EINVAL;
+
+	irq_ctx->deoi = deoi;
+
+	if (deoi)
+		irq_ctx->handler = vfio_intx_handler_deoi;
+	else
+		irq_ctx->handler = vfio_intx_handler;
+
+	return 0;
+}
+
 static int vfio_intx_enable(struct vfio_pci_device *vdev)
 {
 	if (!is_irq_none(vdev))
@@ -200,6 +217,7 @@ static int vfio_intx_set_signal(struct vfio_pci_device *vdev, int fd)
 
 	if (vdev->ctx[0].trigger) {
 		free_irq(pdev->irq, vdev);
+		irq_bypass_unregister_producer(&vdev->ctx[0].producer);
 		kfree(vdev->ctx[0].name);
 		eventfd_ctx_put(vdev->ctx[0].trigger);
 		vdev->ctx[0].trigger = NULL;
@@ -236,6 +254,10 @@ static int vfio_intx_set_signal(struct vfio_pci_device *vdev, int fd)
 		eventfd_ctx_put(trigger);
 		return ret;
 	}
+
+	if (vfio_pci_has_deoi())
+		vfio_pci_register_deoi_producer(vdev, vdev->ctx,
+						trigger, pdev->irq);
 
 	/*
 	 * INTx disable will stick across the new irq setup,
@@ -364,13 +386,8 @@ static int vfio_msi_set_vector_signal(struct vfio_pci_device *vdev,
 		return ret;
 	}
 
-	vdev->ctx[vector].producer.token = trigger;
-	vdev->ctx[vector].producer.irq = irq;
-	ret = irq_bypass_register_producer(&vdev->ctx[vector].producer);
-	if (unlikely(ret))
-		dev_info(&pdev->dev,
-		"irq bypass producer (token %p) registration fails: %d\n",
-		vdev->ctx[vector].producer.token, ret);
+	vfio_pci_register_default_producer(vdev, &vdev->ctx[vector],
+					   trigger, irq);
 
 	vdev->ctx[vector].trigger = trigger;
 

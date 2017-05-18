@@ -30,3 +30,7 @@ config VFIO_PCI_INTX
 config VFIO_PCI_IGD
 	depends on VFIO_PCI
 	def_bool y if X86
+
+config VFIO_PCI_IRQ_BYPASS_DEOI
+	depends on VFIO_PCI && (ARM || ARM64)
+	def_bool y if (ARM || ARM64)
