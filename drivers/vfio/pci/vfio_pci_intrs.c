@@ -121,10 +121,7 @@ void vfio_pci_intx_unmask(struct vfio_pci_device *vdev)
 static irqreturn_t vfio_intx_handler(int irq, void *dev_id)
 {
 	struct vfio_pci_device *vdev = dev_id;
-	unsigned long flags;
 	int ret = IRQ_NONE;
-
-	spin_lock_irqsave(&vdev->irqlock, flags);
 
 	if (!vdev->pci_2_3) {
 		disable_irq_nosync(vdev->pdev->irq);
@@ -137,10 +134,29 @@ static irqreturn_t vfio_intx_handler(int irq, void *dev_id)
 		ret = IRQ_HANDLED;
 	}
 
-	spin_unlock_irqrestore(&vdev->irqlock, flags);
-
 	if (ret == IRQ_HANDLED)
 		vfio_send_intx_eventfd(vdev, NULL);
+
+	return ret;
+}
+
+static irqreturn_t vfio_intx_handler_deoi(int irq, void *dev_id)
+{
+	struct vfio_pci_device *vdev = dev_id;
+
+	vfio_send_intx_eventfd(vdev, NULL);
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t vfio_intx_wrapper_handler(int irq, void *dev_id)
+{
+	struct vfio_pci_device *vdev = dev_id;
+	unsigned long flags;
+	irqreturn_t ret;
+
+	spin_lock_irqsave(&vdev->irqlock, flags);
+	ret = vdev->ctx[0].handler(irq, dev_id);
+	spin_unlock_irqrestore(&vdev->irqlock, flags);
 
 	return ret;
 }
@@ -208,7 +224,11 @@ static int vfio_intx_set_signal(struct vfio_pci_device *vdev, int fd)
 	if (!vdev->pci_2_3)
 		irqflags = 0;
 
-	ret = request_irq(pdev->irq, vfio_intx_handler,
+	if (vdev->ctx[0].deoi)
+		vdev->ctx[0].handler = vfio_intx_handler_deoi;
+	else
+		vdev->ctx[0].handler = vfio_intx_handler;
+	ret = request_irq(pdev->irq, vfio_intx_wrapper_handler,
 			  irqflags, vdev->ctx[0].name, vdev);
 	if (ret) {
 		vdev->ctx[0].trigger = NULL;
