@@ -137,6 +137,28 @@ void vgic_put_irq(struct kvm *kvm, struct vgic_irq *irq)
 	kfree(irq);
 }
 
+bool irq_line_level(struct vgic_irq *irq)
+{
+	bool line_level = irq->line_level;
+
+	if (unlikely(is_unshared_mapped(irq)))
+		WARN_ON(irq_get_irqchip_state(irq->host_irq,
+					      IRQCHIP_STATE_PENDING,
+					      &line_level));
+	return line_level;
+}
+
+bool irq_is_active(struct vgic_irq *irq)
+{
+	bool is_active = irq->active;
+
+	if (unlikely(is_unshared_mapped(irq)))
+		WARN_ON(irq_get_irqchip_state(irq->host_irq,
+					      IRQCHIP_STATE_ACTIVE,
+					      &is_active));
+	return is_active;
+}
+
 /**
  * kvm_vgic_target_oracle - compute the target vcpu for an irq
  *
@@ -153,7 +175,7 @@ static struct kvm_vcpu *vgic_target_oracle(struct vgic_irq *irq)
 	DEBUG_SPINLOCK_BUG_ON(!spin_is_locked(&irq->irq_lock));
 
 	/* If the interrupt is active, it must stay on the current vcpu */
-	if (irq->active)
+	if (irq_is_active(irq))
 		return irq->vcpu ? : irq->target_vcpu;
 
 	/*
@@ -195,14 +217,18 @@ static int vgic_irq_cmp(void *priv, struct list_head *a, struct list_head *b)
 {
 	struct vgic_irq *irqa = container_of(a, struct vgic_irq, ap_list);
 	struct vgic_irq *irqb = container_of(b, struct vgic_irq, ap_list);
+	bool activea, activeb;
 	bool penda, pendb;
 	int ret;
 
 	spin_lock(&irqa->irq_lock);
 	spin_lock_nested(&irqb->irq_lock, SINGLE_DEPTH_NESTING);
 
-	if (irqa->active || irqb->active) {
-		ret = (int)irqb->active - (int)irqa->active;
+	activea = irq_is_active(irqa);
+	activeb = irq_is_active(irqb);
+
+	if (activea || activeb) {
+		ret = (int)activeb - (int)activea;
 		goto out;
 	}
 
@@ -234,13 +260,17 @@ static void vgic_sort_ap_list(struct kvm_vcpu *vcpu)
 
 /*
  * Only valid injection if changing level for level-triggered IRQs or for a
- * rising edge.
+ * rising edge. Injection of virtual interrupts associated to physical
+ * interrupts always is valid.
  */
 static bool vgic_validate_injection(struct vgic_irq *irq, bool level)
 {
 	switch (irq->config) {
 	case VGIC_CONFIG_LEVEL:
-		return irq->line_level != level;
+		if (unlikely(is_unshared_mapped(irq)))
+			return true;
+		else
+			return irq->line_level != level;
 	case VGIC_CONFIG_EDGE:
 		return level;
 	}
@@ -392,7 +422,8 @@ int kvm_vgic_inject_irq(struct kvm *kvm, int cpuid, unsigned int intid,
 	return 0;
 }
 
-int kvm_vgic_map_phys_irq(struct kvm_vcpu *vcpu, u32 virt_irq, u32 phys_irq)
+int kvm_vgic_map_phys_irq(struct kvm_vcpu *vcpu, unsigned int host_irq,
+			  u32 virt_irq, u32 phys_irq)
 {
 	struct vgic_irq *irq = vgic_get_irq(vcpu->kvm, vcpu, virt_irq);
 
@@ -402,6 +433,7 @@ int kvm_vgic_map_phys_irq(struct kvm_vcpu *vcpu, u32 virt_irq, u32 phys_irq)
 
 	irq->hw = true;
 	irq->hwintid = phys_irq;
+	irq->host_irq = host_irq;
 
 	spin_unlock(&irq->irq_lock);
 	vgic_put_irq(vcpu->kvm, irq);

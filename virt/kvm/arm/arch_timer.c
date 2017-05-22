@@ -651,7 +651,8 @@ int kvm_timer_enable(struct kvm_vcpu *vcpu)
 	 * Tell the VGIC that the virtual interrupt is tied to a
 	 * physical interrupt. We do that once per VCPU.
 	 */
-	ret = kvm_vgic_map_phys_irq(vcpu, vtimer->irq.irq, phys_irq);
+	ret = kvm_vgic_map_phys_irq(vcpu, host_vtimer_irq,
+				    vtimer->irq.irq, phys_irq);
 	if (ret)
 		return ret;
 
