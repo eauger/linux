@@ -52,7 +52,7 @@ void vfio_pci_intx_mask(struct vfio_pci_device *vdev)
 	if (unlikely(!is_intx(vdev))) {
 		if (vdev->pci_2_3)
 			pci_intx(pdev, 0);
-	} else if (!vdev->ctx[0].masked) {
+	} else if (!vdev->ctx[0].masked && !vdev->ctx[0].automasked) {
 		/*
 		 * Can't use check_and_mask here because we always want to
 		 * mask, not just when something is pending.
@@ -90,7 +90,8 @@ static int vfio_pci_intx_unmask_handler(void *opaque, void *unused)
 	if (unlikely(!is_intx(vdev))) {
 		if (vdev->pci_2_3)
 			pci_intx(pdev, 1);
-	} else if (vdev->ctx[0].masked && !vdev->virq_disabled) {
+	} else if ((vdev->ctx[0].masked || vdev->ctx[0].automasked) &&
+			!vdev->virq_disabled) {
 		/*
 		 * A pending interrupt here would immediately trigger,
 		 * but we can avoid that overhead by just re-sending
@@ -103,6 +104,7 @@ static int vfio_pci_intx_unmask_handler(void *opaque, void *unused)
 			enable_irq(pdev->irq);
 
 		vdev->ctx[0].masked = (ret > 0);
+		vdev->ctx[0].automasked = (ret > 0);
 	}
 
 	spin_unlock_irqrestore(&vdev->irqlock, flags);
@@ -126,11 +128,12 @@ static irqreturn_t vfio_intx_handler(int irq, void *dev_id)
 
 	if (!vdev->pci_2_3) {
 		disable_irq_nosync(vdev->pdev->irq);
-		vdev->ctx[0].masked = true;
+		vdev->ctx[0].automasked = true;
 		ret = IRQ_HANDLED;
-	} else if (!vdev->ctx[0].masked &&  /* may be shared */
-		   pci_check_and_mask_intx(vdev->pdev)) {
-		vdev->ctx[0].masked = true;
+	} else if (!vdev->ctx[0].masked && !vdev->ctx[0].automasked &&
+			pci_check_and_mask_intx(vdev->pdev)) {
+		 /* shared INTx */
+		vdev->ctx[0].automasked = true;
 		ret = IRQ_HANDLED;
 	}
 

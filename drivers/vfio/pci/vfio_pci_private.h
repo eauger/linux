@@ -35,6 +35,7 @@ struct vfio_pci_irq_ctx {
 	struct virqfd		*mask;
 	char			*name;
 	bool			masked;
+	bool			automasked;
 	struct irq_bypass_producer	producer;
 };
 
