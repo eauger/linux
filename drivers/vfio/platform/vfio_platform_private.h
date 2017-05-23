@@ -34,6 +34,7 @@ struct vfio_platform_irq {
 	char			*name;
 	struct eventfd_ctx	*trigger;
 	bool			masked;
+	bool			automasked;
 	spinlock_t		lock;
 	struct virqfd		*unmask;
 	struct virqfd		*mask;
