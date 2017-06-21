@@ -46,6 +46,10 @@ the PCIe specification.
                         devicetree/bindings/interrupt-controller/msi.txt
                       for a description of the msi-parent property.
 
+- tlbi-on-map       : invalidate caches whenever there is an update of
+                      any remapping structure (updates to not-present or
+                      present entries).
+
 - hisilicon,broken-prefetch-cmd
                     : Avoid sending CMD_PREFETCH_* commands to the SMMU.
 
