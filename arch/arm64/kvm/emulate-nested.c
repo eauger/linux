@@ -34,6 +34,11 @@ bool forward_nv_traps(struct kvm_vcpu *vcpu)
 	return forward_traps(vcpu, HCR_NV);
 }
 
+bool forward_nv1_traps(struct kvm_vcpu *vcpu)
+{
+	return forward_traps(vcpu, HCR_NV1);
+}
+
 static u64 kvm_check_illegal_exception_return(struct kvm_vcpu *vcpu, u64 spsr)
 {
 	u64 mode = spsr & PSR_MODE_MASK;

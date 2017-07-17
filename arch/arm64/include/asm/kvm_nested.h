@@ -61,6 +61,7 @@ static inline u64 translate_ttbr0_el2_to_ttbr0_el1(u64 ttbr0)
 
 extern bool forward_traps(struct kvm_vcpu *vcpu, u64 control_bit);
 extern bool forward_nv_traps(struct kvm_vcpu *vcpu);
+extern bool forward_nv1_traps(struct kvm_vcpu *vcpu);
 
 struct sys_reg_params;
 struct sys_reg_desc;
