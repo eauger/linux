@@ -80,6 +80,7 @@ struct viommu_domain {
 struct viommu_endpoint {
 	struct viommu_dev		*viommu;
 	struct viommu_domain		*vdomain;
+	struct list_head		resv_regions;
 };
 
 struct viommu_request {
@@ -765,6 +766,46 @@ static struct viommu_dev *viommu_get_by_fwnode(struct fwnode_handle *fwnode)
 	return dev ? dev_to_virtio(dev)->priv : NULL;
 }
 
+static int viommu_add_resv_mem(struct viommu_endpoint *vdev,
+			       struct virtio_iommu_probe_resv_mem *mem,
+			       size_t len)
+{
+	struct iommu_resv_region *region = NULL;
+	unsigned long prot = IOMMU_WRITE | IOMMU_NOEXEC | IOMMU_MMIO;
+
+	u64 addr = le64_to_cpu(mem->addr);
+	u64 size = le64_to_cpu(mem->size);
+
+	if (len < sizeof(struct virtio_iommu_probe_resv_mem))
+		return -EINVAL;
+
+	switch (mem->subtype) {
+	case VIRTIO_IOMMU_PROBE_RESV_MEM_T_BYPASS:
+		if (le32_to_cpu(mem->flags) & VIRTIO_IOMMU_PROBE_RESV_MEM_F_MSI) {
+			region = iommu_alloc_resv_region(addr, size, prot,
+							 IOMMU_RESV_MSI);
+			break;
+		}
+		/* Otherwise, pass-through */
+	case VIRTIO_IOMMU_PROBE_RESV_MEM_T_ABORT:
+	default:
+		region = iommu_alloc_resv_region(addr, size, 0,
+						 IOMMU_RESV_RESERVED);
+		break;
+	}
+
+	list_add(&vdev->resv_regions, &region->list);
+
+	if (mem->subtype != VIRTIO_IOMMU_PROBE_RESV_MEM_T_BYPASS &&
+	    mem->subtype != VIRTIO_IOMMU_PROBE_RESV_MEM_T_ABORT) {
+		/* Please update your driver. */
+		pr_debug("unknown resv mem subtype 0x%x\n", mem->subtype);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 static int viommu_probe_device(struct viommu_dev *viommu,
 			       struct device *dev)
 {
@@ -804,9 +845,15 @@ static int viommu_probe_device(struct viommu_dev *viommu,
 		len = le16_to_cpu(prop->length);
 
 		switch (type) {
+		case VIRTIO_IOMMU_PROBE_T_RESV_MEM:
+			ret = viommu_add_resv_mem(vdev, (void *)prop->value, len);
+			break;
 		default:
 			dev_dbg(dev, "unknown viommu prop 0x%x\n", type);
 		}
+
+		if (ret)
+			dev_err(dev, "failed to parse viommu prop 0x%x\n", type);
 
 		cur += sizeof(*prop) + len;
 		if (cur >= viommu->probe_size)
@@ -839,6 +886,7 @@ static int viommu_add_device(struct device *dev)
 		return -ENOMEM;
 
 	vdev->viommu = viommu;
+	INIT_LIST_HEAD(&vdev->resv_regions);
 	fwspec->iommu_priv = vdev;
 
 	if (viommu->probe_size) {
@@ -861,7 +909,19 @@ static int viommu_add_device(struct device *dev)
 
 static void viommu_remove_device(struct device *dev)
 {
-	kfree(dev->iommu_fwspec->iommu_priv);
+	struct viommu_endpoint *vdev;
+	struct iommu_resv_region *entry, *next;
+	struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+
+	if (!fwspec || fwspec->ops != &viommu_ops)
+		return;
+
+	vdev = fwspec->iommu_priv;
+
+	list_for_each_entry_safe(entry, next, &vdev->resv_regions, list)
+		kfree(entry);
+
+	kfree(vdev);
 }
 
 static struct iommu_group *
@@ -881,34 +941,46 @@ static int viommu_of_xlate(struct device *dev, struct of_phandle_args *args)
 	return iommu_fwspec_add_ids(dev, args->args, 1);
 }
 
-/*
- * (Maybe) temporary hack for device pass-through into guest userspace. On ARM
- * with an ITS, VFIO will look for a region where to map the doorbell, even
- * though the virtual doorbell is never written to by the device, and instead
- * the host injects interrupts directly. TODO: sort this out in VFIO.
- */
 #define MSI_IOVA_BASE			0x8000000
 #define MSI_IOVA_LENGTH			0x100000
 
 static void viommu_get_resv_regions(struct device *dev, struct list_head *head)
 {
-	struct iommu_resv_region *region;
+	struct iommu_resv_region *entry, *region = NULL;
+	struct viommu_endpoint *vdev = dev->iommu_fwspec->iommu_priv;
 	int prot = IOMMU_WRITE | IOMMU_NOEXEC | IOMMU_MMIO;
 
-	region = iommu_alloc_resv_region(MSI_IOVA_BASE, MSI_IOVA_LENGTH, prot,
-					 IOMMU_RESV_SW_MSI);
-	if (!region)
-		return;
+	/*
+	 * If the device registered a bypass MSI windows, use it. Otherwise add
+	 * a software-mapped region
+	 */
+	list_for_each_entry(entry, &vdev->resv_regions, list) {
+		if (entry->type == IOMMU_RESV_MSI) {
+			region = entry;
+			break;
+		}
+	}
 
-	list_add_tail(&region->list, head);
+	list_splice_tail(&vdev->resv_regions, head);
+
+	if (!region) {
+		region = iommu_alloc_resv_region(MSI_IOVA_BASE, MSI_IOVA_LENGTH, prot,
+						 IOMMU_RESV_SW_MSI);
+		if (!region)
+			return;
+
+		list_add_tail(&region->list, head);
+	}
 }
 
 static void viommu_put_resv_regions(struct device *dev, struct list_head *head)
 {
 	struct iommu_resv_region *entry, *next;
 
-	list_for_each_entry_safe(entry, next, head, list)
-		kfree(entry);
+	list_for_each_entry_safe(entry, next, head, list) {
+		if (entry->type == IOMMU_RESV_SW_MSI)
+			kfree(entry);
+	}
 }
 
 static struct iommu_ops viommu_ops = {

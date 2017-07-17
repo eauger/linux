@@ -130,7 +130,21 @@ struct virtio_iommu_req_unmap {
 	struct virtio_iommu_req_tail		tail;
 } __packed;
 
+#define VIRTIO_IOMMU_PROBE_RESV_MEM_T_ABORT	0
+#define VIRTIO_IOMMU_PROBE_RESV_MEM_T_BYPASS	1
+
+#define VIRTIO_IOMMU_PROBE_RESV_MEM_F_MSI	(1 << 0)
+
+struct virtio_iommu_probe_resv_mem {
+	__u8					subtype;
+	__u8					reserved[3];
+	__le64					addr;
+	__le64					size;
+	__le32					flags;
+} __packed;
+
 #define VIRTIO_IOMMU_PROBE_T_NONE		0
+#define VIRTIO_IOMMU_PROBE_T_RESV_MEM		2
 
 #define VIRTIO_IOMMU_PROBE_T_MASK		0xfff
 
