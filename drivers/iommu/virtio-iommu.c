@@ -55,6 +55,7 @@ struct viommu_dev {
 	u64				pgsize_bitmap;
 	u64				aperture_start;
 	u64				aperture_end;
+	u32				probe_size;
 	u8				ioasid_bits;
 };
 
@@ -125,7 +126,8 @@ static int viommu_status_to_errno(u8 status)
  *
  * Return 0 on success, or an error when the request seems invalid.
  */
-static int viommu_get_req_size(struct virtio_iommu_req_head *req, size_t *top,
+static int viommu_get_req_size(struct viommu_dev *viommu,
+			       struct virtio_iommu_req_head *req, size_t *top,
 			       size_t *bottom)
 {
 	size_t size;
@@ -145,6 +147,10 @@ static int viommu_get_req_size(struct virtio_iommu_req_head *req, size_t *top,
 		break;
 	case VIRTIO_IOMMU_T_UNMAP:
 		size = sizeof(r->unmap);
+		break;
+	case VIRTIO_IOMMU_T_PROBE:
+		*bottom += viommu->probe_size;
+		size = sizeof(r->probe) + *bottom;
 		break;
 	default:
 		return -EINVAL;
@@ -328,7 +334,7 @@ static int viommu_send_req_sync(struct viommu_dev *viommu, void *top)
 	struct virtio_iommu_req_tail *tail;
 	struct virtio_iommu_req_head *head = top;
 
-	ret = viommu_get_req_size(head, &top_size, &bottom_size);
+	ret = viommu_get_req_size(viommu, head, &top_size, &bottom_size);
 	if (ret)
 		return ret;
 
@@ -759,8 +765,63 @@ static struct viommu_dev *viommu_get_by_fwnode(struct fwnode_handle *fwnode)
 	return dev ? dev_to_virtio(dev)->priv : NULL;
 }
 
+static int viommu_probe_device(struct viommu_dev *viommu,
+			       struct device *dev)
+{
+	int ret;
+	u16 type, len;
+	size_t cur = 0;
+	struct virtio_iommu_req_probe *probe;
+	struct virtio_iommu_probe_property *prop;
+	struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+	struct viommu_endpoint *vdev = fwspec->iommu_priv;
+
+	if (!fwspec->num_ids)
+		/* Trouble ahead. */
+		return 0;
+
+	probe = kzalloc(sizeof(*probe) + viommu->probe_size +
+			sizeof(struct virtio_iommu_req_tail), GFP_KERNEL);
+	if (!probe)
+		return -ENOMEM;
+
+	probe->head.type = VIRTIO_IOMMU_T_PROBE;
+	/*
+	 * For now, assume that properties of a device that spouts multiple IDs
+	 * are consistent. Only probe the first one.
+	 */
+	probe->device = cpu_to_le32(fwspec->ids[0]);
+
+	ret = viommu_send_req_sync(viommu, probe);
+	if (ret)
+		return ret;
+
+	prop = (void *)probe->properties;
+	type = le16_to_cpu(prop->type) & VIRTIO_IOMMU_PROBE_T_MASK;
+
+	while (type != VIRTIO_IOMMU_PROBE_T_NONE &&
+	       cur < viommu->probe_size) {
+		len = le16_to_cpu(prop->length);
+
+		switch (type) {
+		default:
+			dev_dbg(dev, "unknown viommu prop 0x%x\n", type);
+		}
+
+		cur += sizeof(*prop) + len;
+		if (cur >= viommu->probe_size)
+			break;
+
+		prop = (void *)probe->properties + cur;
+		type = le16_to_cpu(prop->type) & VIRTIO_IOMMU_PROBE_T_MASK;
+	}
+
+	return 0;
+}
+
 static int viommu_add_device(struct device *dev)
 {
+	int ret;
 	struct iommu_group *group;
 	struct viommu_endpoint *vdev;
 	struct viommu_dev *viommu = NULL;
@@ -779,6 +840,13 @@ static int viommu_add_device(struct device *dev)
 
 	vdev->viommu = viommu;
 	fwspec->iommu_priv = vdev;
+
+	if (viommu->probe_size) {
+		/* Get additional information for this device */
+		ret = viommu_probe_device(viommu, dev);
+		if (ret)
+			return ret;
+	}
 
 	/*
 	 * Last step creates a default domain and attaches to it. Everything
@@ -920,6 +988,10 @@ static int viommu_probe(struct virtio_device *vdev)
 			     struct virtio_iommu_config, ioasid_bits,
 			     &viommu->ioasid_bits);
 
+	virtio_cread_feature(vdev, VIRTIO_IOMMU_F_PROBE,
+			     struct virtio_iommu_config, probe_size,
+			     &viommu->probe_size);
+
 	viommu_ops.pgsize_bitmap = viommu->pgsize_bitmap;
 
 	/*
@@ -996,6 +1068,7 @@ static unsigned int features[] = {
 	VIRTIO_IOMMU_F_MAP_UNMAP,
 	VIRTIO_IOMMU_F_IOASID_BITS,
 	VIRTIO_IOMMU_F_INPUT_RANGE,
+	VIRTIO_IOMMU_F_PROBE,
 };
 
 static struct virtio_device_id id_table[] = {
