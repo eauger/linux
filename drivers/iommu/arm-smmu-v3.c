@@ -422,6 +422,10 @@
 #define ACPI_IORT_SMMU_V3_CAVIUM_CN99XX		0x2
 #endif
 
+#ifndef ACPI_IORT_SMMU_V3_CACHING_MODE
+#define ACPI_IORT_SMMU_V3_CACHING_MODE		0x3
+#endif
+
 static bool disable_bypass;
 module_param_named(disable_bypass, disable_bypass, bool, S_IRUGO);
 MODULE_PARM_DESC(disable_bypass,
@@ -2672,6 +2676,9 @@ static void acpi_smmu_get_options(u32 model, struct arm_smmu_device *smmu)
 		break;
 	case ACPI_IORT_SMMU_HISILICON_HI161X:
 		smmu->options |= ARM_SMMU_OPT_SKIP_PREFETCH;
+		break;
+	case ACPI_IORT_SMMU_V3_CACHING_MODE:
+		smmu->options |= ARM_SMMU_OPT_TLBI_ON_MAP;
 		break;
 	}
 
