@@ -492,9 +492,15 @@ struct arm_smmu_cmdq_ent {
 		#define CMDQ_OP_TLBI_S12_VMALL	0x28
 		#define CMDQ_OP_TLBI_S2_IPA	0x2a
 		#define CMDQ_OP_TLBI_NSNH_ALL	0x30
+
+		/* vIOMMU ASID/IOVA Range Invalidation */
+		#define CMDQ_OP_TLBI_NH_VA_AM	0x8F
 		struct {
 			u16			asid;
-			u16			vmid;
+			union {
+				u16		vmid;
+				u16		am; /* address mask */
+			};
 			bool			leaf;
 			u64			addr;
 		} tlbi;
@@ -850,6 +856,12 @@ static int arm_smmu_cmdq_build_cmd(u64 *cmd, struct arm_smmu_cmdq_ent *ent)
 		break;
 	case CMDQ_OP_TLBI_NH_VA:
 		cmd[0] |= (u64)ent->tlbi.asid << CMDQ_TLBI_0_ASID_SHIFT;
+		cmd[1] |= ent->tlbi.leaf ? CMDQ_TLBI_1_LEAF : 0;
+		cmd[1] |= ent->tlbi.addr & CMDQ_TLBI_1_VA_MASK;
+		break;
+	case CMDQ_OP_TLBI_NH_VA_AM:
+		cmd[0] |= (u64)ent->tlbi.asid << CMDQ_TLBI_0_ASID_SHIFT;
+		cmd[0] |= (u64)ent->tlbi.am << CMDQ_TLBI_0_VMID_SHIFT;
 		cmd[1] |= ent->tlbi.leaf ? CMDQ_TLBI_1_LEAF : 0;
 		cmd[1] |= ent->tlbi.addr & CMDQ_TLBI_1_VA_MASK;
 		break;
@@ -1402,8 +1414,14 @@ static void arm_smmu_tlb_inv_range_nosync(unsigned long iova, size_t size,
 	};
 
 	if (smmu_domain->stage == ARM_SMMU_DOMAIN_S1) {
-		cmd.opcode	= CMDQ_OP_TLBI_NH_VA;
 		cmd.tlbi.asid	= smmu_domain->s1_cfg.cd.asid;
+		if (smmu->options & ARM_SMMU_OPT_TLBI_ON_MAP) {
+			cmd.opcode	= CMDQ_OP_TLBI_NH_VA_AM;
+			cmd.tlbi.am   = size >> 12;
+			granule = size;
+		} else {
+			cmd.opcode	= CMDQ_OP_TLBI_NH_VA;
+		}
 	} else {
 		cmd.opcode	= CMDQ_OP_TLBI_S2_IPA;
 		cmd.tlbi.vmid	= smmu_domain->s2_cfg.vmid;
