@@ -910,6 +910,30 @@ static void vgic_its_free_device(struct kvm *kvm, struct its_device *device)
 	kfree(device);
 }
 
+static void vgic_its_free_device_list(struct kvm *kvm, struct vgic_its *its)
+{
+	struct its_device *cur, *temp;
+
+	mutex_lock(&its->its_lock);
+
+	list_for_each_entry_safe(cur, temp, &its->device_list, dev_list)
+		vgic_its_free_device(kvm, cur);
+
+	mutex_unlock(&its->its_lock);
+}
+
+static void vgic_its_free_collection_list(struct kvm *kvm, struct vgic_its *its)
+{
+	struct its_collection *cur, *temp;
+
+	mutex_lock(&its->its_lock);
+
+	list_for_each_entry_safe(cur, temp, &its->collection_list, coll_list)
+		vgic_its_free_collection(its, cur->collection_id);
+
+	mutex_unlock(&its->its_lock);
+}
+
 /* Must be called with its_lock mutex held */
 static struct its_device *vgic_its_alloc_device(struct vgic_its *its,
 						u32 device_id, gpa_t itt_addr,
@@ -1627,32 +1651,9 @@ static void vgic_its_destroy(struct kvm_device *kvm_dev)
 {
 	struct kvm *kvm = kvm_dev->kvm;
 	struct vgic_its *its = kvm_dev->private;
-	struct list_head *cur, *temp;
 
-	/*
-	 * We may end up here without the lists ever having been initialized.
-	 * Check this and bail out early to avoid dereferencing a NULL pointer.
-	 */
-	if (!its->device_list.next)
-		return;
-
-	mutex_lock(&its->its_lock);
-	list_for_each_safe(cur, temp, &its->device_list) {
-		struct its_device *dev;
-
-		dev = list_entry(cur, struct its_device, dev_list);
-		vgic_its_free_device(kvm, dev);
-	}
-
-	list_for_each_safe(cur, temp, &its->collection_list) {
-		struct its_collection *coll;
-
-		coll = list_entry(cur, struct its_collection, coll_list);
-		list_del(cur);
-		kfree(coll);
-	}
-	mutex_unlock(&its->its_lock);
-
+	vgic_its_free_device_list(kvm, its);
+	vgic_its_free_collection_list(kvm, its);
 	kfree(its);
 }
 
