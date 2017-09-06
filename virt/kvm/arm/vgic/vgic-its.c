@@ -2018,7 +2018,7 @@ static int vgic_its_restore_dte(struct vgic_its *its, u32 id,
 		return PTR_ERR(dev);
 
 	ret = vgic_its_restore_itt(its, dev);
-	if (ret) {
+	if (ret < 0) {
 		vgic_its_free_device(its->dev->kvm, dev);
 		return ret;
 	}
@@ -2141,7 +2141,7 @@ static int vgic_its_restore_device_tables(struct vgic_its *its)
 	}
 
 	if (ret > 0)
-		ret = -EINVAL;
+		ret = 0;
 
 	return ret;
 }
