@@ -33,6 +33,10 @@ Groups:
       request the initialization of the ITS, no additional parameter in
       kvm_device_attr.addr.
 
+    KVM_DEV_ARM_ITS_CTRL_RESET
+      reset the ITS, no additional parameter in kvm_device_attr.addr.
+      See "ITS Reset State" section.
+
     KVM_DEV_ARM_ITS_SAVE_TABLES
       save the ITS table data into guest RAM, at the location provisioned
       by the guest in corresponding registers/table entries.
@@ -157,3 +161,15 @@ Then vcpus can be started.
  - pINTID is the physical LPI ID; if zero, it means the entry is not valid
    and other fields are not meaningful.
  - ICID is the collection ID
+
+ ITS Reset State:
+ ----------------
+
+- the ITS is not enabled and quiescent:
+  GITS_CTLR.Enabled = 0 .Quiescent=1
+- caches are empty
+- No collection or device table is provisionned
+  GITS_BASER<n>.Valid = 0
+- the command queue is not allocated:
+  GITS_CBASER = 0, GITS_CREADR = 0, GITS_CWRITER = 0
+- The ABI version corresponds to the one set before reset
