@@ -1301,17 +1301,20 @@ static void vgic_mmio_write_its_cbaser(struct kvm *kvm, struct vgic_its *its,
 /* Must be called with the cmd_lock held. */
 static void vgic_its_process_commands(struct kvm *kvm, struct vgic_its *its)
 {
-	gpa_t cbaser;
+	gpa_t cbaser_pa;
 	u64 cmd_buf[4];
 
-	/* Commands are only processed when the ITS is enabled. */
-	if (!its->enabled)
+	/*
+	 * Commands are only processed when the ITS is enabled and
+	 * CBASER is valid
+	 */
+	if (!its->enabled || (!(its->cbaser & GITS_CBASER_VALID)))
 		return;
 
-	cbaser = CBASER_ADDRESS(its->cbaser);
+	cbaser_pa = CBASER_ADDRESS(its->cbaser);
 
 	while (its->cwriter != its->creadr) {
-		int ret = kvm_read_guest(kvm, cbaser + its->creadr,
+		int ret = kvm_read_guest(kvm, cbaser_pa + its->creadr,
 					 cmd_buf, ITS_CMD_SIZE);
 		/*
 		 * If kvm_read_guest() fails, this could be due to the guest
