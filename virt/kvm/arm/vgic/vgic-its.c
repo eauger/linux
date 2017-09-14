@@ -1329,7 +1329,7 @@ static void vgic_mmio_write_its_cwriter(struct kvm *kvm, struct vgic_its *its,
 
 	reg = update_64bit_reg(its->cwriter, addr & 7, len, val);
 	reg = ITS_CMD_OFFSET(reg);
-	if (reg >= ITS_CMD_BUFFER_SIZE(its->cbaser)) {
+	if (reg && reg >= ITS_CMD_BUFFER_SIZE(its->cbaser)) {
 		mutex_unlock(&its->cmd_lock);
 		return;
 	}
@@ -1370,7 +1370,7 @@ static int vgic_mmio_uaccess_write_its_creadr(struct kvm *kvm,
 	}
 
 	cmd_offset = ITS_CMD_OFFSET(val);
-	if (cmd_offset >= ITS_CMD_BUFFER_SIZE(its->cbaser)) {
+	if (cmd_offset && cmd_offset >= ITS_CMD_BUFFER_SIZE(its->cbaser)) {
 		ret = -EINVAL;
 		goto out;
 	}
