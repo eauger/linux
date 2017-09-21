@@ -688,14 +688,24 @@ static int vgic_its_cmd_handle_movi(struct kvm *kvm, struct vgic_its *its,
 }
 
 /*
- * Check whether an ID can be stored into the corresponding guest table.
+ * vgic_its_check_id - Check whether an ID can be stored into
+ * the corresponding guest table.
+ *
  * For a direct table this is pretty easy, but gets a bit nasty for
  * indirect tables. We check whether the resulting guest physical address
  * is actually valid (covered by a memslot and guest accessible).
  * For this we have to read the respective first level entry.
+ *
+ * @its: its handle
+ * @baser: GITS_BASER<n> register
+ * @id: id of the device/collection
+ * @eaddr: output gpa of the corresponding table entry
+ *
+ * Return: 0 on success, -EINVAL if @id is out of range, -EFAULT if
+ * the address cannot be computed or is not valid
  */
-static bool vgic_its_check_id(struct vgic_its *its, u64 baser, u32 id,
-			      gpa_t *eaddr)
+static int vgic_its_check_id(struct vgic_its *its, u64 baser, u32 id,
+			     gpa_t *eaddr)
 {
 	int l1_tbl_size = GITS_BASER_NR_PAGES(baser) * SZ_64K;
 	u64 indirect_ptr, type = GITS_BASER_TYPE(baser);
@@ -703,50 +713,56 @@ static bool vgic_its_check_id(struct vgic_its *its, u64 baser, u32 id,
 	int index;
 	gfn_t gfn;
 
+	if (!(baser & GITS_BASER_VALID))
+		return -EFAULT;
+
 	switch (type) {
 	case GITS_BASER_TYPE_DEVICE:
 		if (id >= BIT_ULL(VITS_TYPER_DEVBITS))
-			return false;
+			return -EINVAL;
 		break;
 	case GITS_BASER_TYPE_COLLECTION:
 		/* as GITS_TYPER.CIL == 0, ITS supports 16-bit collection ID */
 		if (id >= BIT_ULL(16))
-			return false;
+			return -EINVAL;
 		break;
 	default:
-		return false;
+		return -EINVAL;
 	}
 
 	if (!(baser & GITS_BASER_INDIRECT)) {
 		phys_addr_t addr;
 
 		if (id >= (l1_tbl_size / esz))
-			return false;
+			return -EINVAL;
 
 		addr = BASER_ADDRESS(baser) + id * esz;
 		gfn = addr >> PAGE_SHIFT;
 
 		if (eaddr)
 			*eaddr = addr;
-		return kvm_is_visible_gfn(its->dev->kvm, gfn);
+		if (kvm_is_visible_gfn(its->dev->kvm, gfn))
+			return 0;
+		else
+			return -EFAULT;
 	}
 
 	/* calculate and check the index into the 1st level */
 	index = id / (SZ_64K / esz);
 	if (index >= (l1_tbl_size / sizeof(u64)))
-		return false;
+		return -EINVAL;
 
 	/* Each 1st level entry is represented by a 64-bit value. */
 	if (kvm_read_guest(its->dev->kvm,
 			   BASER_ADDRESS(baser) + index * sizeof(indirect_ptr),
 			   &indirect_ptr, sizeof(indirect_ptr)))
-		return false;
+		return -EFAULT;
 
 	indirect_ptr = le64_to_cpu(indirect_ptr);
 
 	/* check the valid bit of the first level entry */
 	if (!(indirect_ptr & BIT_ULL(63)))
-		return false;
+		return -EFAULT;
 
 	/*
 	 * Mask the guest physical address and calculate the frame number.
@@ -762,7 +778,10 @@ static bool vgic_its_check_id(struct vgic_its *its, u64 baser, u32 id,
 
 	if (eaddr)
 		*eaddr = indirect_ptr;
-	return kvm_is_visible_gfn(its->dev->kvm, gfn);
+	if (kvm_is_visible_gfn(its->dev->kvm, gfn))
+		return 0;
+	else
+		return -EFAULT;
 }
 
 static int vgic_its_alloc_collection(struct vgic_its *its,
@@ -771,7 +790,7 @@ static int vgic_its_alloc_collection(struct vgic_its *its,
 {
 	struct its_collection *collection;
 
-	if (!vgic_its_check_id(its, its->baser_coll_table, coll_id, NULL))
+	if (vgic_its_check_id(its, its->baser_coll_table, coll_id, NULL))
 		return E_ITS_MAPC_COLLECTION_OOR;
 
 	collection = kzalloc(sizeof(*collection), GFP_KERNEL);
@@ -943,7 +962,7 @@ static int vgic_its_cmd_handle_mapd(struct kvm *kvm, struct vgic_its *its,
 	gpa_t itt_addr = its_cmd_get_ittaddr(its_cmd);
 	struct its_device *device;
 
-	if (!vgic_its_check_id(its, its->baser_device_table, device_id, NULL))
+	if (vgic_its_check_id(its, its->baser_device_table, device_id, NULL))
 		return E_ITS_MAPD_DEVICE_OOR;
 
 	if (valid && num_eventid_bits > VITS_TYPER_IDBITS)
@@ -2060,9 +2079,9 @@ static int vgic_its_save_device_tables(struct vgic_its *its)
 		int ret;
 		gpa_t eaddr;
 
-		if (!vgic_its_check_id(its, baser,
-				       dev->device_id, &eaddr))
-			return -EINVAL;
+		ret = vgic_its_check_id(its, baser, dev->device_id, &eaddr);
+		if (ret)
+			return ret;
 
 		ret = vgic_its_save_itt(its, dev);
 		if (ret)
