@@ -2381,12 +2381,9 @@ static int vgic_its_save_tables_v0(struct vgic_its *its)
 	}
 
 	ret = vgic_its_save_device_tables(its);
-	if (ret)
-		goto out;
 
-	ret = vgic_its_save_collection_table(its);
+	ret |= vgic_its_save_collection_table(its);
 
-out:
 	unlock_all_vcpus(kvm);
 	mutex_unlock(&its->its_lock);
 	mutex_unlock(&kvm->lock);
@@ -2413,11 +2410,9 @@ static int vgic_its_restore_tables_v0(struct vgic_its *its)
 	}
 
 	ret = vgic_its_restore_collection_table(its);
-	if (ret)
-		goto out;
 
-	ret = vgic_its_restore_device_tables(its);
-out:
+	ret |= vgic_its_restore_device_tables(its);
+
 	unlock_all_vcpus(kvm);
 	mutex_unlock(&its->its_lock);
 	mutex_unlock(&kvm->lock);
