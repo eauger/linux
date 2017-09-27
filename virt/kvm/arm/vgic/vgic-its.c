@@ -2324,11 +2324,11 @@ static int vgic_its_save_tables_v0(struct vgic_its *its)
 		return -EBUSY;
 	}
 
-	ret = vgic_its_save_device_tables(its);
+	ret = vgic_its_save_collection_table(its);
 	if (ret)
 		goto out;
 
-	ret = vgic_its_save_collection_table(its);
+	ret = vgic_its_save_device_tables(its);
 
 out:
 	unlock_all_vcpus(kvm);
