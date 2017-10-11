@@ -1488,6 +1488,16 @@ static void vgic_mmio_write_its_ctlr(struct kvm *kvm, struct vgic_its *its,
 	its->enabled = !!(val & GITS_CTLR_ENABLE);
 
 	/*
+	 * It is UNPREDICTABLE to enable the ITS if any of the CBASER or
+	 * device/collection BASER are invalid
+	 */
+	if (its->enabled &&
+		(!(its->baser_device_table & GITS_BASER_VALID) ||
+		 !(its->baser_coll_table & GITS_BASER_VALID) ||
+		 !(its->cbaser && GITS_CBASER_VALID)))
+		its->enabled = false;
+
+	/*
 	 * Try to process any pending commands. This function bails out early
 	 * if the ITS is disabled or no commands have been queued.
 	 */
