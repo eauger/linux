@@ -2169,7 +2169,19 @@ static int vgic_its_save_cte(struct vgic_its *its,
 	return kvm_write_guest(its->dev->kvm, gpa, &val, esz);
 }
 
-static int vgic_its_restore_cte(struct vgic_its *its, gpa_t gpa, int esz)
+/**
+ * vgic_its_restore_cte - Restore a collection table entry
+ *
+ * @its: its handle
+ * @gpa: guest physical address of the entry
+ * @esz: entry size
+ * @last: output boolean indicating whether we have reached the
+ *       end of the collection table (ie. an invalid entry was decoded)
+ *
+ * Return: 0 upon success, < 0 on error
+ */
+static int vgic_its_restore_cte(struct vgic_its *its, gpa_t gpa, int esz,
+				bool *last)
 {
 	struct its_collection *collection;
 	struct kvm *kvm = its->dev->kvm;
@@ -2182,7 +2194,8 @@ static int vgic_its_restore_cte(struct vgic_its *its, gpa_t gpa, int esz)
 	if (ret)
 		return ret;
 	val = le64_to_cpu(val);
-	if (!(val & KVM_ITS_CTE_VALID_MASK))
+	*last = !(val & KVM_ITS_CTE_VALID_MASK);
+	if (*last)
 		return 0;
 
 	target_addr = (u32)(val >> KVM_ITS_CTE_RDBASE_SHIFT);
@@ -2198,7 +2211,7 @@ static int vgic_its_restore_cte(struct vgic_its *its, gpa_t gpa, int esz)
 	if (ret)
 		return ret;
 	collection->target_addr = target_addr;
-	return 1;
+	return 0;
 }
 
 /**
@@ -2243,8 +2256,13 @@ static int vgic_its_save_collection_table(struct vgic_its *its)
 
 /**
  * vgic_its_restore_collection_table - reads the collection table
- * in guest memory and restores the ITS internal state. Requires the
- * BASER registers to be restored before.
+ * in guest memory and restores the ITS collection cache.
+ *
+ * @its: its handle
+ *
+ * Requires the Collection BASER to be previously restored.
+ *
+ * Returns 0 on success or < 0 on error
  */
 static int vgic_its_restore_collection_table(struct vgic_its *its)
 {
@@ -2262,13 +2280,17 @@ static int vgic_its_restore_collection_table(struct vgic_its *its)
 	max_size = GITS_BASER_NR_PAGES(its->baser_coll_table) * SZ_64K;
 
 	while (read < max_size) {
-		ret = vgic_its_restore_cte(its, gpa, cte_esz);
-		if (ret <= 0)
-			break;
+		bool last;
+
+		ret = vgic_its_restore_cte(its, gpa, cte_esz, &last);
+		if (ret < 0 || last)
+			return ret;
 		gpa += cte_esz;
 		read += cte_esz;
 	}
-	return ret;
+
+	/* table was fully filled with valid entries, decoded without error */
+	return 0;
 }
 
 /**
