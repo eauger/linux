@@ -536,4 +536,7 @@ if ARM64
 source "drivers/acpi/arm64/Kconfig"
 endif
 
+config ACPI_IORT
+	bool
+
 endif	# ACPI
