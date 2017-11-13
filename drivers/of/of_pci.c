@@ -378,7 +378,8 @@ int of_pci_map_rid(struct device_node *np, u32 rid,
 		return 0;
 	}
 
-	pr_err("%pOF: Invalid %s translation - no match for rid 0x%x on %pOF\n",
-		np, map_name, rid, target && *target ? *target : NULL);
-	return -EFAULT;
+	/* bypass mode. */
+	if (id_out)
+		*id_out = rid;
+	return 0;
 }
