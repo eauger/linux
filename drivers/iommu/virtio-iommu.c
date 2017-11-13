@@ -30,6 +30,12 @@
 #define MSI_IOVA_BASE			0x8000000
 #define MSI_IOVA_LENGTH			0x100000
 
+enum viommu_vq_idx {
+	VIOMMU_REQUEST_VQ	= 0,
+	VIOMMU_EVENT_VQ		= 1,
+	VIOMMU_NUM_VQS		= 2,
+};
+
 struct viommu_dev {
 	struct iommu_device		iommu;
 	struct device			*dev;
@@ -37,7 +43,7 @@ struct viommu_dev {
 
 	struct ida			domain_ids;
 
-	struct virtqueue		*vq;
+	struct virtqueue		*vqs[VIOMMU_NUM_VQS];
 	/* Serialize anything touching the request queue */
 	spinlock_t			request_lock;
 
@@ -82,6 +88,15 @@ struct viommu_request {
 
 	int				written;
 	struct list_head		list;
+};
+
+#define VIOMMU_FAULT_RESV_MASK		0xffffff00
+
+struct viommu_event {
+	union {
+		u32			head;
+		struct virtio_iommu_fault fault;
+	};
 };
 
 #define to_viommu_domain(domain) container_of(domain, struct viommu_domain, domain)
@@ -160,12 +175,13 @@ static int viommu_receive_resp(struct viommu_dev *viommu, int nr_sent,
 	unsigned int len;
 	int nr_received = 0;
 	struct viommu_request *req, *pending;
+	struct virtqueue *vq = viommu->vqs[VIOMMU_REQUEST_VQ];
 
 	pending = list_first_entry_or_null(sent, struct viommu_request, list);
 	if (WARN_ON(!pending))
 		return 0;
 
-	while ((req = virtqueue_get_buf(viommu->vq, &len)) != NULL) {
+	while ((req = virtqueue_get_buf(vq, &len)) != NULL) {
 		if (req != pending) {
 			dev_warn(viommu->dev, "discarding stale request\n");
 			continue;
@@ -202,6 +218,7 @@ static int _viommu_send_reqs_sync(struct viommu_dev *viommu,
 	 * dies.
 	 */
 	unsigned long timeout_ms = 1000;
+	struct virtqueue *vq = viommu->vqs[VIOMMU_REQUEST_VQ];
 
 	*nr_sent = 0;
 
@@ -211,15 +228,14 @@ static int _viommu_send_reqs_sync(struct viommu_dev *viommu,
 		sg[0] = &req->top;
 		sg[1] = &req->bottom;
 
-		ret = virtqueue_add_sgs(viommu->vq, sg, 1, 1, req,
-					GFP_ATOMIC);
+		ret = virtqueue_add_sgs(vq, sg, 1, 1, req, GFP_ATOMIC);
 		if (ret)
 			break;
 
 		list_add_tail(&req->list, &pending);
 	}
 
-	if (i && !virtqueue_kick(viommu->vq))
+	if (i && !virtqueue_kick(vq))
 		return -EPIPE;
 
 	timeout = ktime_add_ms(ktime_get(), timeout_ms * i);
@@ -552,6 +568,70 @@ static int viommu_probe_endpoint(struct viommu_dev *viommu, struct device *dev)
 	kfree(probe);
 
 	return 0;
+}
+
+static int viommu_fault_handler(struct viommu_dev *viommu,
+				struct virtio_iommu_fault *fault)
+{
+	char *reason_str;
+
+	u8 reason	= fault->reason;
+	u32 flags	= le32_to_cpu(fault->flags);
+	u32 endpoint	= le32_to_cpu(fault->endpoint);
+	u64 address	= le64_to_cpu(fault->address);
+
+	switch (reason) {
+	case VIRTIO_IOMMU_FAULT_R_DOMAIN:
+		reason_str = "domain";
+		break;
+	case VIRTIO_IOMMU_FAULT_R_MAPPING:
+		reason_str = "page";
+		break;
+	case VIRTIO_IOMMU_FAULT_R_UNKNOWN:
+	default:
+		reason_str = "unknown";
+		break;
+	}
+
+	/* TODO: find EP by ID and report_iommu_fault */
+	if (flags & VIRTIO_IOMMU_FAULT_F_ADDRESS)
+		dev_err_ratelimited(viommu->dev, "%s fault from EP %u at %#llx [%s%s%s]\n",
+				    reason_str, endpoint, address,
+				    flags & VIRTIO_IOMMU_FAULT_F_READ ? "R" : "",
+				    flags & VIRTIO_IOMMU_FAULT_F_WRITE ? "W" : "",
+				    flags & VIRTIO_IOMMU_FAULT_F_EXEC ? "X" : "");
+	else
+		dev_err_ratelimited(viommu->dev, "%s fault from EP %u\n",
+				    reason_str, endpoint);
+
+	return 0;
+}
+
+static void viommu_event_handler(struct virtqueue *vq)
+{
+	int ret;
+	unsigned int len;
+	struct scatterlist sg[1];
+	struct viommu_event *evt;
+	struct viommu_dev *viommu = vq->vdev->priv;
+
+	while ((evt = virtqueue_get_buf(vq, &len)) != NULL) {
+		if (len > sizeof(*evt)) {
+			dev_err(viommu->dev,
+				"invalid event buffer (len %u != %zu)\n",
+				len, sizeof(*evt));
+		} else if (!(evt->head & VIOMMU_FAULT_RESV_MASK)) {
+			viommu_fault_handler(viommu, &evt->fault);
+		}
+
+		sg_init_one(sg, evt, sizeof(*evt));
+		ret = virtqueue_add_inbuf(vq, sg, 1, evt, GFP_ATOMIC);
+		if (ret)
+			dev_err(viommu->dev, "could not add event buffer\n");
+	}
+
+	if (!virtqueue_kick(vq))
+		dev_err(viommu->dev, "kick failed\n");
 }
 
 /* IOMMU API */
@@ -938,19 +1018,44 @@ static struct iommu_ops viommu_ops = {
 	.put_resv_regions	= viommu_put_resv_regions,
 };
 
-static int viommu_init_vq(struct viommu_dev *viommu)
+static int viommu_init_vqs(struct viommu_dev *viommu)
 {
 	struct virtio_device *vdev = dev_to_virtio(viommu->dev);
-	const char *name = "request";
-	void *ret;
+	const char *names[] = { "request", "event" };
+	vq_callback_t *callbacks[] = {
+		NULL, /* No async requests */
+		viommu_event_handler,
+	};
 
-	ret = virtio_find_single_vq(vdev, NULL, name);
-	if (IS_ERR(ret)) {
-		dev_err(viommu->dev, "cannot find VQ\n");
-		return PTR_ERR(ret);
+	return virtio_find_vqs(vdev, VIOMMU_NUM_VQS, viommu->vqs, callbacks,
+			       names, NULL);
+}
+
+static int viommu_fill_evtq(struct viommu_dev *viommu)
+{
+	int i, ret;
+	struct scatterlist sg[1];
+	struct viommu_event *evts;
+	struct virtqueue *vq = viommu->vqs[VIOMMU_EVENT_VQ];
+	size_t nr_evts = min_t(size_t, PAGE_SIZE / sizeof(struct viommu_event),
+			       viommu->vqs[VIOMMU_EVENT_VQ]->num_free);
+
+	evts = devm_kmalloc_array(viommu->dev, nr_evts, sizeof(*evts),
+				  GFP_KERNEL);
+	if (!evts)
+		return -ENOMEM;
+
+	for (i = 0; i < nr_evts; i++) {
+		sg_init_one(sg, &evts[i], sizeof(*evts));
+		ret = virtqueue_add_inbuf(vq, sg, 1, &evts[i], GFP_KERNEL);
+		if (ret)
+			return ret;
 	}
 
-	viommu->vq = ret;
+	if (!virtqueue_kick(vq))
+		return -EPIPE;
+
+	dev_info(viommu->dev, "%zu event buffers\n", nr_evts);
 
 	return 0;
 }
@@ -973,7 +1078,7 @@ static int viommu_probe(struct virtio_device *vdev)
 	viommu->dev = dev;
 	viommu->vdev = vdev;
 
-	ret = viommu_init_vq(viommu);
+	ret = viommu_init_vqs(viommu);
 	if (ret)
 		goto err_free_viommu;
 
@@ -1013,6 +1118,11 @@ static int viommu_probe(struct virtio_device *vdev)
 	viommu_ops.pgsize_bitmap = viommu->pgsize_bitmap;
 
 	virtio_device_ready(vdev);
+
+	/* Populate the event queue with buffers */
+	ret = viommu_fill_evtq(viommu);
+	if (ret)
+		goto err_free_viommu;
 
 	ret = iommu_device_sysfs_add(&viommu->iommu, dev, NULL, "%s",
 				     virtio_bus_name(vdev));
