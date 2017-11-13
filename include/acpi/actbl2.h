@@ -696,7 +696,8 @@ enum acpi_iort_node_type {
 	ACPI_IORT_NODE_NAMED_COMPONENT = 0x01,
 	ACPI_IORT_NODE_PCI_ROOT_COMPLEX = 0x02,
 	ACPI_IORT_NODE_SMMU = 0x03,
-	ACPI_IORT_NODE_SMMU_V3 = 0x04
+	ACPI_IORT_NODE_SMMU_V3 = 0x04,
+	ACPI_IORT_NODE_PARAVIRT = 0x05,
 };
 
 struct acpi_iort_id_mapping {
@@ -823,6 +824,21 @@ struct acpi_iort_smmu_v3 {
 #define ACPI_IORT_SMMU_V3_COHACC_OVERRIDE   (1)
 #define ACPI_IORT_SMMU_V3_HTTU_OVERRIDE     (1<<1)
 #define ACPI_IORT_SMMU_V3_PXM_VALID         (1<<3)
+
+struct acpi_iort_pviommu {
+	u64 base_address;
+	u64 span;
+	u32 model;
+	u32 flags;
+	u32 interrupt_count;
+	u64 interrupts[];
+};
+
+enum acpi_iort_paravirt_node_model {
+	ACPI_IORT_NODE_PV_VIRTIO_IOMMU = 0x00,
+};
+
+#define ACPI_IORT_NODE_PV_CACHE_COHERENT    (1<<0)
 
 /*******************************************************************************
  *

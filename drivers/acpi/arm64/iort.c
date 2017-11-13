@@ -29,7 +29,8 @@
 #define IORT_TYPE_MASK(type)	(1 << (type))
 #define IORT_MSI_TYPE		(1 << ACPI_IORT_NODE_ITS_GROUP)
 #define IORT_IOMMU_TYPE		((1 << ACPI_IORT_NODE_SMMU) |	\
-				(1 << ACPI_IORT_NODE_SMMU_V3))
+				(1 << ACPI_IORT_NODE_SMMU_V3) | \
+				(1 << ACPI_IORT_NODE_PARAVIRT))
 
 /* Until ACPICA headers cover IORT rev. C */
 #ifndef ACPI_IORT_SMMU_V3_CAVIUM_CN99XX
@@ -616,6 +617,8 @@ static inline bool iort_iommu_driver_enabled(u8 type)
 		return IS_BUILTIN(CONFIG_ARM_SMMU_V3);
 	case ACPI_IORT_NODE_SMMU:
 		return IS_BUILTIN(CONFIG_ARM_SMMU);
+	case ACPI_IORT_NODE_PARAVIRT:
+		return IS_BUILTIN(CONFIG_VIRTIO_IOMMU);
 	default:
 		pr_warn("IORT node type %u does not describe an SMMU\n", type);
 		return false;
@@ -1051,6 +1054,48 @@ static bool __init arm_smmu_is_coherent(struct acpi_iort_node *node)
 	return smmu->flags & ACPI_IORT_SMMU_COHERENT_WALK;
 }
 
+static int __init paravirt_count_resources(struct acpi_iort_node *node)
+{
+	struct acpi_iort_pviommu *pviommu;
+
+	pviommu = (struct acpi_iort_pviommu *)node->node_data;
+
+	/* Mem + IRQs */
+	return 1 + pviommu->interrupt_count;
+}
+
+static void __init paravirt_init_resources(struct resource *res,
+					   struct acpi_iort_node *node)
+{
+	int i;
+	int num_res = 0;
+	int hw_irq, trigger;
+	struct acpi_iort_pviommu *pviommu;
+
+	pviommu = (struct acpi_iort_pviommu *)node->node_data;
+
+	res[num_res].start = pviommu->base_address;
+	res[num_res].end = pviommu->base_address + pviommu->span - 1;
+	res[num_res].flags = IORESOURCE_MEM;
+	num_res++;
+
+	for (i = 0; i < pviommu->interrupt_count; i++) {
+		hw_irq = IORT_IRQ_MASK(pviommu->interrupts[i]);
+		trigger = IORT_IRQ_TRIGGER_MASK(pviommu->interrupts[i]);
+
+		acpi_iort_register_irq(hw_irq, "pviommu", trigger, &res[num_res++]);
+	}
+}
+
+static bool __init paravirt_is_coherent(struct acpi_iort_node *node)
+{
+	struct acpi_iort_pviommu *pviommu;
+
+	pviommu = (struct acpi_iort_pviommu *)node->node_data;
+
+	return pviommu->flags & ACPI_IORT_NODE_PV_CACHE_COHERENT;
+}
+
 struct iort_iommu_config {
 	const char *name;
 	int (*iommu_init)(struct acpi_iort_node *node);
@@ -1077,6 +1122,13 @@ static const struct iort_iommu_config iort_arm_smmu_cfg __initconst = {
 	.iommu_init_resources = arm_smmu_init_resources
 };
 
+static const struct iort_iommu_config iort_paravirt_cfg __initconst = {
+	.name = "pviommu",
+	.iommu_is_coherent = paravirt_is_coherent,
+	.iommu_count_resources = paravirt_count_resources,
+	.iommu_init_resources = paravirt_init_resources
+};
+
 static __init
 const struct iort_iommu_config *iort_get_iommu_cfg(struct acpi_iort_node *node)
 {
@@ -1085,18 +1137,22 @@ const struct iort_iommu_config *iort_get_iommu_cfg(struct acpi_iort_node *node)
 		return &iort_arm_smmu_v3_cfg;
 	case ACPI_IORT_NODE_SMMU:
 		return &iort_arm_smmu_cfg;
+	case ACPI_IORT_NODE_PARAVIRT:
+		return &iort_paravirt_cfg;
 	default:
 		return NULL;
 	}
 }
 
 /**
- * iort_add_smmu_platform_device() - Allocate a platform device for SMMU
- * @node: Pointer to SMMU ACPI IORT node
+ * iort_add_iommu_platform_device() - Allocate a platform device for an IOMMU
+ * @node: Pointer to IOMMU ACPI IORT node
+ * @name: Base name of the device
  *
  * Returns: 0 on success, <0 failure
  */
-static int __init iort_add_smmu_platform_device(struct acpi_iort_node *node)
+static int __init iort_add_iommu_platform_device(struct acpi_iort_node *node,
+						 const char *name)
 {
 	struct fwnode_handle *fwnode;
 	struct platform_device *pdev;
@@ -1108,7 +1164,7 @@ static int __init iort_add_smmu_platform_device(struct acpi_iort_node *node)
 	if (!ops)
 		return -ENODEV;
 
-	pdev = platform_device_alloc(ops->name, PLATFORM_DEVID_AUTO);
+	pdev = platform_device_alloc(name, PLATFORM_DEVID_AUTO);
 	if (!pdev)
 		return -ENOMEM;
 
@@ -1178,6 +1234,28 @@ dev_put:
 	return ret;
 }
 
+static int __init iort_add_smmu_platform_device(struct acpi_iort_node *node)
+{
+	const struct iort_iommu_config *ops = iort_get_iommu_cfg(node);
+
+	if (!ops)
+		return -ENODEV;
+
+	return iort_add_iommu_platform_device(node, ops->name);
+}
+
+static int __init iort_add_paravirt_platform_device(struct acpi_iort_node *node)
+{
+	struct acpi_iort_pviommu *pviommu;
+
+	pviommu = (struct acpi_iort_pviommu *)node->node_data;
+
+	if (WARN_ON(pviommu->model != ACPI_IORT_NODE_PV_VIRTIO_IOMMU))
+		return -ENODEV;
+
+	return iort_add_iommu_platform_device(node, "virtio-mmio");
+}
+
 static bool __init iort_enable_acs(struct acpi_iort_node *iort_node)
 {
 	if (iort_node->type == ACPI_IORT_NODE_PCI_ROOT_COMPLEX) {
@@ -1239,7 +1317,8 @@ static void __init iort_init_platform_devices(void)
 			acs_enabled = iort_enable_acs(iort_node);
 
 		if ((iort_node->type == ACPI_IORT_NODE_SMMU) ||
-			(iort_node->type == ACPI_IORT_NODE_SMMU_V3)) {
+			(iort_node->type == ACPI_IORT_NODE_SMMU_V3) ||
+			(iort_node->type == ACPI_IORT_NODE_PARAVIRT)) {
 
 			fwnode = acpi_alloc_fwnode_static();
 			if (!fwnode)
@@ -1247,7 +1326,9 @@ static void __init iort_init_platform_devices(void)
 
 			iort_set_fwnode(iort_node, fwnode);
 
-			ret = iort_add_smmu_platform_device(iort_node);
+			ret = iort_node->type == ACPI_IORT_NODE_PARAVIRT ?
+				iort_add_paravirt_platform_device(iort_node) :
+				iort_add_smmu_platform_device(iort_node);
 			if (ret) {
 				iort_delete_fwnode(iort_node);
 				acpi_free_fwnode_static(fwnode);
