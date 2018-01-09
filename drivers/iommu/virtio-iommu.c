@@ -1302,12 +1302,12 @@ static int viommu_probe(struct virtio_device *vdev)
 		if (ret)
 			goto err_unregister;
 	}
-#endif
 	if (platform_bus_type.iommu_ops != &viommu_ops) {
 		ret = bus_set_iommu(&platform_bus_type, &viommu_ops);
 		if (ret)
 			goto err_unregister;
 	}
+#endif
 
 	vdev->priv = viommu;
 
