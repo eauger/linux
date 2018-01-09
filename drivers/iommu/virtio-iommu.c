@@ -99,7 +99,19 @@ struct viommu_event {
 	};
 };
 
+#ifdef CONFIG_X86
+/* HACK: stores the only virtio-iommu object. */
+static struct viommu_dev *viommu_global;
+#endif
+
 #define to_viommu_domain(domain) container_of(domain, struct viommu_domain, domain)
+
+static inline u16 __pci_device_id(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+
+	return PCI_DEVID(pdev->bus->number, pdev->devfn);
+}
 
 /* Virtio transport */
 
@@ -877,6 +889,7 @@ static phys_addr_t viommu_iova_to_phys(struct iommu_domain *domain,
 static struct iommu_ops viommu_ops;
 static struct virtio_driver virtio_iommu_drv;
 
+#ifndef CONFIG_X86
 static int viommu_match_node(struct device *dev, void *data)
 {
 	return dev->parent->fwnode == data;
@@ -890,14 +903,28 @@ static struct viommu_dev *viommu_get_by_fwnode(struct fwnode_handle *fwnode)
 
 	return dev ? dev_to_virtio(dev)->priv : NULL;
 }
+#endif
 
 static int viommu_add_device(struct device *dev)
 {
 	int ret;
 	struct iommu_group *group;
-	struct viommu_endpoint *vdev;
 	struct viommu_dev *viommu = NULL;
-	struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+	struct viommu_endpoint *vdev;
+	struct iommu_fwspec *fwspec;
+#ifdef CONFIG_X86
+	viommu = viommu_global;
+	dev->iommu_fwspec = kzalloc(sizeof(struct iommu_fwspec), GFP_KERNEL);
+	if (!dev->iommu_fwspec)
+		return -ENOMEM;
+
+	fwspec = dev->iommu_fwspec;
+	fwspec->iommu_fwnode = (void *)viommu;
+	fwspec->ops = &viommu_ops;
+	fwspec->num_ids = 1;
+	fwspec->ids[0] = __pci_device_id(dev);
+#else
+	fwspec = dev->iommu_fwspec;
 
 	if (!fwspec || fwspec->ops != &viommu_ops)
 		return -ENODEV;
@@ -905,6 +932,7 @@ static int viommu_add_device(struct device *dev)
 	viommu = viommu_get_by_fwnode(fwspec->iommu_fwnode);
 	if (!viommu)
 		return -ENODEV;
+#endif
 
 	vdev = kzalloc(sizeof(*vdev), GFP_KERNEL);
 	if (!vdev)
@@ -1070,6 +1098,11 @@ static int viommu_probe(struct virtio_device *vdev)
 	u64 input_end = -1UL;
 	int ret;
 
+#ifdef CONFIG_X86
+	if (viommu_global)
+		panic("Currently only one virtio-iommu is supported!");
+#endif
+
 	viommu = kzalloc(sizeof(*viommu), GFP_KERNEL);
 	if (!viommu)
 		return -ENOMEM;
@@ -1134,6 +1167,10 @@ static int viommu_probe(struct virtio_device *vdev)
 	iommu_device_set_fwnode(&viommu->iommu, parent_dev->fwnode);
 
 	iommu_device_register(&viommu->iommu);
+
+#ifdef CONFIG_X86
+	viommu_global = viommu;
+#endif
 
 #ifdef CONFIG_PCI
 	if (pci_bus_type.iommu_ops != &viommu_ops) {
