@@ -265,8 +265,10 @@ static int _viommu_send_reqs_sync(struct viommu_dev *viommu,
 		}
 	}
 
-	if (nr_received != i)
+	if (nr_received != i) {
 		ret = -ETIMEDOUT;
+		printk("%s timeout\n", __func__);
+	}
 
 	if (ret == -ENOSPC && nr_received)
 		/*
