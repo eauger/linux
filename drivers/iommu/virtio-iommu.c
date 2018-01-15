@@ -312,7 +312,7 @@ static int viommu_send_req_sync(struct viommu_dev *viommu, void *top)
 	int ret;
 	int nr_sent;
 	void *bottom;
-	struct viommu_request req = {0};
+	struct viommu_request req = {{0}};
 	size_t top_size, bottom_size;
 	struct virtio_iommu_req_tail *tail;
 	struct virtio_iommu_req_head *head = top;
@@ -774,9 +774,10 @@ static int viommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 		ret = viommu_replay_mappings(vdomain);
 		if (ret)
 			return ret;
+		refcount_set(&vdomain->endpoints, 1);
+	} else {
+		refcount_inc(&vdomain->endpoints);
 	}
-
-	refcount_inc(&vdomain->endpoints);
 	vdev->vdomain = vdomain;
 
 	return 0;
