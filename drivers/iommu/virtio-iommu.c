@@ -502,11 +502,15 @@ static int viommu_add_resv_mem(struct viommu_endpoint *vdev,
 	case VIRTIO_IOMMU_RESV_MEM_T_MSI:
 		region = iommu_alloc_resv_region(addr, size, prot,
 						 IOMMU_RESV_MSI);
+		if (!region)
+			return -ENOMEM;
 		break;
 	case VIRTIO_IOMMU_RESV_MEM_T_RESERVED:
 	default:
 		region = iommu_alloc_resv_region(addr, size, 0,
 						 IOMMU_RESV_RESERVED);
+		if (!region)
+			return  -ENOMEM;
 		break;
 	}
 
@@ -738,7 +742,7 @@ static int viommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 		if (iommu_dma_init_domain(domain,
 					  vdev->viommu->geometry.aperture_start,
 					  vdev->viommu->geometry.aperture_end,
-					  NULL)) {
+					  dev)) {
 			pr_err("%s: init dma domain fail\n", __func__);
 			mutex_unlock(&vdomain->mutex);
 			return -1;
