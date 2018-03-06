@@ -196,6 +196,14 @@ struct vgic_its {
 
 struct vgic_state_iter;
 
+struct vgic_redist_region {
+	uint32_t index;
+	gpa_t base;
+	uint32_t pfns;/* number of 64 kB pages or 0 if single region */
+	uint32_t free_pfn_offset;
+	struct list_head list;
+};
+
 struct vgic_dist {
 	bool			in_kernel;
 	bool			ready;
@@ -219,10 +227,7 @@ struct vgic_dist {
 		/* either a GICv2 CPU interface */
 		gpa_t			vgic_cpu_base;
 		/* or a number of GICv3 redistributor regions */
-		struct {
-			gpa_t		vgic_redist_base;
-			gpa_t		vgic_redist_free_offset;
-		};
+		struct list_head rd_regions;
 	};
 
 	/* distributor enabled */
