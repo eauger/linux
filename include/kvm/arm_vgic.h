@@ -312,6 +312,7 @@ struct vgic_cpu {
 	 */
 	struct vgic_io_device	rd_iodev;
 	struct vgic_io_device	sgi_iodev;
+	bool rdist_last; /* Is the RDIST the last one of the RDIST region? */
 
 	/* Contains the attributes and gpa of the LPI pending tables. */
 	u64 pendbaser;
