@@ -254,6 +254,15 @@ vgic_v3_redist_region_full(struct vgic_redist_region *region)
 	return (region->free_pfn_offset > region->pfns - 2);
 }
 
+static inline bool
+vgic_v3_last_rdist(struct kvm_vcpu *vcpu, struct vgic_redist_region *region)
+{
+	if (vcpu->vcpu_id == atomic_read(&vcpu->kvm->online_vcpus) - 1)
+		return true;
+
+	return vgic_v3_redist_region_full(region);
+}
+
 struct vgic_redist_region *vgic_v3_rdist_free_slot(struct list_head *rd_regions,
 						   uint32_t *free_pfn_offset);
 

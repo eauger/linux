@@ -637,8 +637,7 @@ int vgic_register_redist_iodev(struct kvm_vcpu *vcpu)
 	}
 
 	rdreg->free_pfn_offset += 2;
-	vgic_cpu->rdist_last =
-		(vcpu->vcpu_id == atomic_read(&vcpu->kvm->online_vcpus) - 1);
+	vgic_cpu->rdist_last = vgic_v3_last_rdist(vcpu, rdreg);
 out:
 	mutex_unlock(&kvm->slots_lock);
 	return ret;
