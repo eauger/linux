@@ -479,6 +479,11 @@ static inline phys_addr_t pmd_page_paddr(pmd_t pmd)
 #define __raw_pud_bad(pud)	(!(pud_val(pud) & PUD_TABLE_BIT))
 #define __raw_pud_present(pud)	pte_present(pud_pte(pud))
 
+static inline int __raw_pud_huge(pud_t pud)
+{
+	return pud_val(pud) && !(pud_val(pud) & PUD_TABLE_BIT);
+}
+
 static inline void __raw_set_pud(pud_t *pudp, pud_t pud)
 {
 	WRITE_ONCE(*pudp, pud);
