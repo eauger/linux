@@ -29,6 +29,30 @@
 #define PGALLOC_GFP	(GFP_KERNEL | __GFP_ZERO)
 #define PGD_SIZE	(PTRS_PER_PGD * sizeof(pgd_t))
 
+static inline void __raw_pmd_free(pmd_t *pmdp)
+{
+	BUG_ON((unsigned long)pmdp & (PAGE_SIZE-1));
+	free_page((unsigned long)pmdp);
+}
+
+static inline void
+__raw_pud_populate(pud_t *pudp, phys_addr_t pmdp, pudval_t prot)
+{
+	__raw_set_pud(pudp, __pud(__phys_to_pud_val(pmdp) | prot));
+}
+
+static inline void __raw_pud_free(pud_t *pudp)
+{
+	BUG_ON((unsigned long)pudp & (PAGE_SIZE-1));
+	free_page((unsigned long)pudp);
+}
+
+static inline void
+__raw_pgd_populate(pgd_t *pgdp, phys_addr_t pudp, pgdval_t prot)
+{
+	__raw_set_pgd(pgdp, __pgd(__phys_to_pgd_val(pudp) | prot));
+}
+
 #if CONFIG_PGTABLE_LEVELS > 2
 
 static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
@@ -38,13 +62,12 @@ static inline pmd_t *pmd_alloc_one(struct mm_struct *mm, unsigned long addr)
 
 static inline void pmd_free(struct mm_struct *mm, pmd_t *pmdp)
 {
-	BUG_ON((unsigned long)pmdp & (PAGE_SIZE-1));
-	free_page((unsigned long)pmdp);
+	__raw_pmd_free(pmdp);
 }
 
 static inline void __pud_populate(pud_t *pudp, phys_addr_t pmdp, pudval_t prot)
 {
-	set_pud(pudp, __pud(__phys_to_pud_val(pmdp) | prot));
+	__raw_pud_populate(pudp, pmdp, prot);
 }
 
 static inline void pud_populate(struct mm_struct *mm, pud_t *pudp, pmd_t *pmdp)
@@ -67,13 +90,12 @@ static inline pud_t *pud_alloc_one(struct mm_struct *mm, unsigned long addr)
 
 static inline void pud_free(struct mm_struct *mm, pud_t *pudp)
 {
-	BUG_ON((unsigned long)pudp & (PAGE_SIZE-1));
-	free_page((unsigned long)pudp);
+	__raw_pud_free(pudp);
 }
 
 static inline void __pgd_populate(pgd_t *pgdp, phys_addr_t pudp, pgdval_t prot)
 {
-	set_pgd(pgdp, __pgd(__phys_to_pgd_val(pudp) | prot));
+	__raw_pgd_populate(pgdp, pudp, prot);
 }
 
 static inline void pgd_populate(struct mm_struct *mm, pgd_t *pgdp, pud_t *pudp)
