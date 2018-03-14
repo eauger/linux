@@ -676,13 +676,62 @@ static int vgic_register_all_redist_iodevs(struct kvm *kvm)
 	return ret;
 }
 
-int vgic_v3_set_redist_base(struct kvm *kvm, u64 addr)
+/**
+ * vgic_v3_insert_redist_region - Insert a new redistributor region
+ *
+ * Performs various checks before inserting the rdist region in the list.
+ * Those tests depend on whether the size of the rdist region is known
+ * (ie. pfns != 0). The list is sorted by rdist region index.
+ *
+ * @kvm: kvm handle
+ * @index: redist region index
+ * @base: base of the new rdist region
+ * @pfns: number of 64kB pages the region is made of (of 0 in the old style
+ * single region, whose size is induced from the number of vcpus
+ *
+ * Return 0 on success, < 0 otherwise
+ */
+static int vgic_v3_insert_redist_region(struct kvm *kvm, uint32_t index,
+					gpa_t base, uint32_t pfns)
 {
-	struct vgic_dist *vgic = &kvm->arch.vgic;
+	struct vgic_dist *d = &kvm->arch.vgic;
 	struct vgic_redist_region *rdreg;
+	struct list_head *rd_regions = &d->rd_regions;
+	struct list_head *last = rd_regions->prev;
+
+	gpa_t new_start, new_end;
+	size_t size = pfns * SZ_64K;
 	int ret;
 
-	if (!list_empty(&vgic->rd_regions))
+	/* single rdist region already set ?*/
+	if (!pfns && !list_empty(rd_regions))
+		return -EINVAL;
+
+	/* cross the end of memory ? */
+	if (base + size < base)
+		return -EINVAL;
+
+	if (list_empty(rd_regions)) {
+		if (index != 0)
+			return -EINVAL;
+	} else {
+		rdreg = list_entry(last, struct vgic_redist_region, list);
+		if (index != rdreg->index + 1)
+			return -EINVAL;
+	}
+
+	/*
+	 * collision with already set dist region ?
+	 * this assumes we know the size of the new rdist region (pfns != 0)
+	 * otherwise we can only test this when all vcpus are registered
+	 */
+	if (!pfns && !IS_VGIC_ADDR_UNDEF(d->vgic_dist_base) &&
+		(!(d->vgic_dist_base + KVM_VGIC_V3_DIST_SIZE <= base)) &&
+		(!(base + size <= d->vgic_dist_base)))
+		return -EINVAL;
+
+	/* collision with any other rdist region? */
+	if (vgic_v3_rdist_overlap(kvm, base, size))
 		return -EINVAL;
 
 	rdreg = kzalloc(sizeof(*rdreg), GFP_KERNEL);
@@ -692,17 +741,32 @@ int vgic_v3_set_redist_base(struct kvm *kvm, u64 addr)
 	rdreg->base = VGIC_ADDR_UNDEF;
 
 	/* vgic_check_ioaddr makes sure we don't do this twice */
-	ret = vgic_check_ioaddr(kvm, &rdreg->base, addr, SZ_64K);
+	ret = vgic_check_ioaddr(kvm, &rdreg->base, base, SZ_64K);
 	if (ret)
-		goto out;
+		goto free;
 
-	rdreg->base = addr;
-	if (!vgic_v3_check_base(kvm)) {
-		ret = -EINVAL;
-		goto out;
-	}
+	rdreg->base = base;
+	rdreg->pfns = pfns;
+	rdreg->free_pfn_offset = 0;
+	rdreg->index = index;
 
-	list_add(&rdreg->list, &vgic->rd_regions);
+	new_start = base;
+	new_end = base + size - 1;
+
+	list_add_tail(&rdreg->list, rd_regions);
+	return 0;
+free:
+	kfree(rdreg);
+	return ret;
+}
+
+int vgic_v3_set_redist_base(struct kvm *kvm, u64 addr)
+{
+	int ret;
+
+	ret = vgic_v3_insert_redist_region(kvm, 0, addr, 0);
+	if (ret)
+		return ret;
 
 	/*
 	 * Register iodevs for each existing VCPU.  Adding more VCPUs
@@ -713,10 +777,6 @@ int vgic_v3_set_redist_base(struct kvm *kvm, u64 addr)
 		return ret;
 
 	return 0;
-
-out:
-	kfree(rdreg);
-	return ret;
 }
 
 int vgic_v3_has_attr_regs(struct kvm_device *dev, struct kvm_device_attr *attr)
