@@ -311,6 +311,22 @@ static inline u64 read_zcr_features(void)
 	return zcr;
 }
 
+static inline u32 id_aa64mmfr0_parange_to_phys_shift(int parange)
+{
+	switch (parange) {
+	case 0: return 32;
+	case 1: return 36;
+	case 2: return 40;
+	case 3: return 42;
+	case 4: return 44;
+	/* Report 48 bit if the kernel doesn't support 52bit */
+	default:
+	case 5: return 48;
+#ifdef CONFIG_ARM64_PA_BITS_52
+	case 6: return 52;
+#endif
+	}
+}
 #endif /* __ASSEMBLY__ */
 
 #endif
