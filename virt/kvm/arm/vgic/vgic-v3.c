@@ -431,6 +431,27 @@ bool vgic_v3_check_base(struct kvm *kvm)
 	return false;
 }
 
+/**
+ * vgic_v3_rdist_free_slot - Lookup registered rdist regions and identify one
+ * which has free space to put a new rdist regions
+ *
+ * If any, return this redist region handle and the pfn offset to the free slot.
+ * Otherwise, returns NULL.
+ */
+struct vgic_redist_region *vgic_v3_rdist_free_slot(struct list_head *rd_regions,
+						   uint32_t *free_pfn_offset)
+{
+	struct vgic_redist_region *rdreg;
+
+	list_for_each_entry(rdreg, rd_regions, list) {
+		if (!vgic_v3_redist_region_full(rdreg)) {
+			*free_pfn_offset = rdreg->free_pfn_offset;
+			return rdreg;
+		}
+	}
+	return NULL;
+}
+
 int vgic_v3_map_resources(struct kvm *kvm)
 {
 	int ret = 0;
