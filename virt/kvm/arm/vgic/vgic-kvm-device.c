@@ -92,7 +92,7 @@ int kvm_vgic_addr(struct kvm *kvm, unsigned long type, u64 *addr, bool write)
 		if (r)
 			break;
 		if (write) {
-			r = vgic_v3_set_redist_base(kvm, *addr);
+			r = vgic_v3_set_redist_base(kvm, 0, *addr, 0);
 			goto out;
 		}
 		rdreg = list_first_entry(&vgic->rd_regions,
@@ -101,6 +101,38 @@ int kvm_vgic_addr(struct kvm *kvm, unsigned long type, u64 *addr, bool write)
 			addr_ptr = &undef_value;
 		else
 			addr_ptr = &rdreg->base;
+		break;
+	}
+	case KVM_VGIC_V3_ADDR_TYPE_REDIST_REGION:
+	{
+		struct vgic_redist_region *rdreg;
+		uint8_t index;
+
+		r = vgic_check_type(kvm, KVM_DEV_TYPE_ARM_VGIC_V3);
+		if (r)
+			break;
+
+		index = *addr & KVM_VGIC_V3_RDIST_INDEX_MASK;
+
+		if (write) {
+			gpa_t base = *addr & KVM_VGIC_V3_RDIST_BASE_MASK;
+			uint32_t pfns = (*addr & KVM_VGIC_V3_RDIST_PFNS_MASK)
+					>> KVM_VGIC_V3_RDIST_PFNS_SHIFT;
+
+			if (!pfns)
+				r = -EINVAL;
+			else
+				r = vgic_v3_set_redist_base(kvm, index,
+							    base, pfns);
+			goto out;
+		}
+
+		rdreg = vgic_v3_rdist_region_from_index(kvm, index);
+		if (!rdreg)
+			r = -ENODEV;
+
+		*addr_ptr = rdreg->base & index &
+			(uint64_t)rdreg->pfns << KVM_VGIC_V3_RDIST_PFNS_SHIFT;
 		break;
 	}
 	default:
