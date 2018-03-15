@@ -124,6 +124,8 @@
 #define VTCR_EL2_VS_8BIT	(0 << VTCR_EL2_VS_SHIFT)
 #define VTCR_EL2_VS_16BIT	(1 << VTCR_EL2_VS_SHIFT)
 
+#define VTCR_EL2_T0SZ(x)	TCR_T0SZ((x))
+
 /*
  * We configure the Stage-2 page tables to always restrict the IPA space to be
  * 40 bits wide (T0SZ = 24).  Systems with a PARange smaller than 40 bits are
@@ -150,7 +152,8 @@
  * 2 level page tables (SL = 1)
  */
 #define VTCR_EL2_TGRAN_FLAGS		(VTCR_EL2_TG0_64K | VTCR_EL2_SL0_LVL1)
-#define VTTBR_X_TGRAN_MAGIC		38
+#define VTCR_EL2_TGRAN_SL0_BASE		3UL
+
 #elif defined(CONFIG_ARM64_16K_PAGES)
 /*
  * Stage2 translation configuration:
@@ -158,7 +161,7 @@
  * 2 level page tables (SL = 1)
  */
 #define VTCR_EL2_TGRAN_FLAGS		(VTCR_EL2_TG0_16K | VTCR_EL2_SL0_LVL1)
-#define VTTBR_X_TGRAN_MAGIC		42
+#define VTCR_EL2_TGRAN_SL0_BASE		3UL
 #else	/* 4K */
 /*
  * Stage2 translation configuration:
@@ -166,13 +169,96 @@
  * 3 level page tables (SL = 1)
  */
 #define VTCR_EL2_TGRAN_FLAGS		(VTCR_EL2_TG0_4K | VTCR_EL2_SL0_LVL1)
-#define VTTBR_X_TGRAN_MAGIC		37
+#define VTCR_EL2_TGRAN_SL0_BASE		2UL
 #endif
 
 #define VTCR_EL2_FLAGS			(VTCR_EL2_COMMON_BITS | VTCR_EL2_TGRAN_FLAGS)
-#define VTTBR_X				(VTTBR_X_TGRAN_MAGIC - VTCR_EL2_T0SZ_IPA)
+/*
+ * VTCR_EL2:SL0 indicates the entry level for Stage2 translation.
+ * Interestingly, it depends on the page size.
+ * See D.10.2.110, VTCR_EL2, in ARM DDI 0487B.b
+ *
+ *	-----------------------------------------
+ *	| Entry level		|  4K  | 16K/64K |
+ *	------------------------------------------
+ *	| Level: 0		|  2   |   -     |
+ *	------------------------------------------
+ *	| Level: 1		|  1   |   2     |
+ *	------------------------------------------
+ *	| Level: 2		|  0   |   1     |
+ *	------------------------------------------
+ *	| Level: 3		|  -   |   0     |
+ *	------------------------------------------
+ *
+ * That table roughly translates to :
+ *
+ *	SL0(PAGE_SIZE, Entry_level) = SL0_BASE(PAGE_SIZE) - Entry_Level
+ *
+ * Where SL0_BASE(4K) = 2 and SL0_BASE(16K) = 3, SL0_BASE(64K) = 3, provided
+ * we take care of ruling out the unsupported cases and
+ * Entry_Level = 4 - Number_of_levels.
+ *
+ */
+#define VTCR_EL2_SL0(levels) \
+	((VTCR_EL2_TGRAN_SL0_BASE - (4 - (levels))) << VTCR_EL2_SL0_SHIFT)
+/*
+ * ARM VMSAv8-64 defines an algorithm for finding the translation table
+ * descriptors in section D4.2.8 in ARM DDI 0487B.b.
+ *
+ * The algorithm defines the expectaions on the BaseAddress (for the page
+ * table) bits resolved at each level based on the page size, entry level
+ * and T0SZ. The variable "x" in the algorithm also affects the VTTBR:BADDR
+ * for stage2 page table.
+ *
+ * The value of "x" is calculated as :
+ *	x = Magic_N - T0SZ
+ *
+ * where Magic_N is an integer depending on the page size and the entry
+ * level of the page table as below:
+ *
+ *	--------------------------------------------
+ *	| Entry level		|  4K    16K   64K |
+ *	--------------------------------------------
+ *	| Level: 0 (4 levels)	| 28   |  -  |  -  |
+ *	--------------------------------------------
+ *	| Level: 1 (3 levels)	| 37   | 31  | 25  |
+ *	--------------------------------------------
+ *	| Level: 2 (2 levels)	| 46   | 42  | 38  |
+ *	--------------------------------------------
+ *	| Level: 3 (1 level)	| -    | 53  | 51  |
+ *	--------------------------------------------
+ *
+ * We have a magic formula for the Magic_N below.
+ * Which can also be expressed as:
+ *
+ *  Magic_N(PAGE_SIZE, Entry_Level) = 64 - ((PAGE_SHIFT - 3) * Number of levels)
+ *
+ * where number of levels = (4 - Entry_Level).
+ *
+ * So, given that T0SZ = (64 - PA_SHIFT), we can compute 'x' as follows:
+ *
+ *	x = (64 - ((PAGE_SHIFT - 3) * Number_of_levels)) - (64 - PA_SHIFT)
+ *	  = PA_SHIFT - ((PAGE_SHIFT - 3) * Number of levels)
+ *
+ * Here is one way to explain the Magic Formula:
+ *
+ *  x = log2(Size_of_Entry_Level_Table)
+ *
+ * Since, we can resolve (PAGE_SHIFT - 3) bits at each level, and another
+ * PAGE_SHIFT bits in the PTE, we have :
+ *
+ *  Bits_Entry_level = PA_SHIFT - ((PAGE_SHIFT - 3) * (n - 1) + PAGE_SHIFT)
+ *		     = PA_SHIFT - (PAGE_SHIFT - 3) * n - 3
+ *  where n = number of levels, and since each pointer is 8bytes, we have:
+ *
+ *  x = Bits_Entry_Level + 3
+ *    = PA_SHIFT - (PAGE_SHIFT - 3) * n
+ *
+ * The only constraint here is that, we have to find the number of page table
+ * levels for a given IPA size (which we do, see STAGE2_PGTABLE_LEVELS).
+ */
+#define ARM64_VTTBR_X(ipa, levels)	((ipa) - ((levels) * (PAGE_SHIFT - 3)))
 
-#define VTTBR_BADDR_MASK  (((UL(1) << (PHYS_MASK_SHIFT - VTTBR_X)) - 1) << VTTBR_X)
 #define VTTBR_VMID_SHIFT  (UL(48))
 #define VTTBR_VMID_MASK(size) (_AT(u64, (1 << size) - 1) << VTTBR_VMID_SHIFT)
 
