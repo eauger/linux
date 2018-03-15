@@ -66,7 +66,7 @@ extern void __vgic_v3_init_lrs(void);
 
 extern u32 __kvm_get_mdcr_el2(void);
 
-extern u32 __init_stage2_translation(void);
+extern void __init_stage2_translation(void);
 
 extern void __qcom_hyp_sanitize_btac_predictors(void);
 

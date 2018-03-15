@@ -164,6 +164,12 @@ static void __hyp_text __deactivate_traps(struct kvm_vcpu *vcpu)
 static void __hyp_text __activate_vm(struct kvm_vcpu *vcpu)
 {
 	struct kvm *kvm = kern_hyp_va(vcpu->kvm);
+	u64 vtcr = read_sysreg(vtcr_el2);
+
+	vtcr &= ~VTCR_EL2_PRIVATE_MASK;
+	vtcr |= VTCR_EL2_SL0(kvm_stage2_levels(kvm)) |
+		VTCR_EL2_T0SZ(kvm_phys_shift(kvm));
+	write_sysreg(vtcr, vtcr_el2);
 	write_sysreg(kvm->arch.vttbr, vttbr_el2);
 }
 

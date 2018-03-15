@@ -19,13 +19,11 @@
 #include <asm/kvm_arm.h>
 #include <asm/kvm_asm.h>
 #include <asm/kvm_hyp.h>
-#include <asm/cpufeature.h>
 
-u32 __hyp_text __init_stage2_translation(void)
+void __hyp_text __init_stage2_translation(void)
 {
 	u64 val = VTCR_EL2_FLAGS;
 	u64 parange;
-	u32 phys_shift;
 	u64 tmp;
 
 	/*
@@ -38,16 +36,6 @@ u32 __hyp_text __init_stage2_translation(void)
 		parange = ID_AA64MMFR0_PARANGE_MAX;
 	val |= parange << 16;
 
-	/* Compute the actual PARange... */
-	phys_shift = id_aa64mmfr0_parange_to_phys_shift(parange);
-
-	/*
-	 * ... and clamp it to 40 bits, unless we have some braindead
-	 * HW that implements less than that. In all cases, we'll
-	 * return that value for the rest of the kernel to decide what
-	 * to do.
-	 */
-	val |= 64 - (phys_shift > 40 ? 40 : phys_shift);
 
 	/*
 	 * Check the availability of Hardware Access Flag / Dirty Bit
@@ -67,6 +55,4 @@ u32 __hyp_text __init_stage2_translation(void)
 			VTCR_EL2_VS_8BIT;
 
 	write_sysreg(val, vtcr_el2);
-
-	return phys_shift;
 }
