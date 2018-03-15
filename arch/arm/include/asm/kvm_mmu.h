@@ -29,18 +29,29 @@
 #define kern_hyp_va(kva)	(kva)
 
 /*
- * KVM_MMU_CACHE_MIN_PAGES is the number of stage2 page table translation levels.
+ * kvm_mmu_cache_min_pages() is the number of stage2 page
+ * table translation levels, excluding the top level, for
+ * the given VM. Since we have a 3 level page-table, this
+ * is fixed.
  */
-#define KVM_MMU_CACHE_MIN_PAGES	2
+#define kvm_mmu_cache_min_pages(kvm)	2
 
 #ifndef __ASSEMBLY__
 
 #include <linux/highmem.h>
 #include <asm/cacheflush.h>
 #include <asm/cputype.h>
+#include <asm/kvm_arm.h>
 #include <asm/kvm_hyp.h>
 #include <asm/pgalloc.h>
 #include <asm/stage2_pgtable.h>
+
+#define kvm_phys_shift(kvm)		KVM_PHYS_SHIFT
+#define kvm_phys_size(kvm)		(_AC(1, ULL) << kvm_phys_shift(kvm))
+#define kvm_phys_mask(kvm)		(kvm_phys_size(kvm) - _AC(1, ULL))
+#define kvm_vttbr_baddr_mask(kvm)	VTTBR_BADDR_MASK
+
+#define stage2_pgd_size(kvm)		(PTRS_PER_S2_PGD * sizeof(pgd_t))
 
 int create_hyp_mappings(void *from, void *to, pgprot_t prot);
 int create_hyp_io_mappings(void *from, void *to, phys_addr_t);
