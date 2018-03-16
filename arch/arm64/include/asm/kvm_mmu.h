@@ -136,9 +136,10 @@ static inline unsigned long __kern_hyp_va(unsigned long v)
  */
 #define KVM_PHYS_SHIFT	(40)
 
-#define kvm_phys_shift(kvm)		KVM_PHYS_SHIFT
+#define kvm_phys_shift(kvm)		(kvm->arch.phys_shift)
 #define kvm_phys_size(kvm)		(_AC(1, ULL) << kvm_phys_shift(kvm))
 #define kvm_phys_mask(kvm)		(kvm_phys_size(kvm) - _AC(1, ULL))
+#define kvm_stage2_levels(kvm)		(kvm->arch.s2_levels)
 
 static inline bool kvm_page_empty(void *ptr)
 {
@@ -416,7 +417,13 @@ static inline u32 kvm_get_ipa_limit(void)
 	return KVM_PHYS_SHIFT;
 }
 
-static inline void kvm_config_stage2(struct kvm *kvm, u32 ipa_shift) {}
+static inline void kvm_config_stage2(struct kvm *kvm, u8 ipa_shift)
+{
+	kvm->arch.phys_shift = ipa_shift;
+	kvm->arch.s2_levels = stage2_pt_levels(ipa_shift);
+	kvm->arch.vtcr_private = VTCR_EL2_SL0(kvm->arch.s2_levels) |
+				 TCR_T0SZ(ipa_shift);
+}
 
 #endif /* __ASSEMBLY__ */
 #endif /* __ARM64_KVM_MMU_H__ */

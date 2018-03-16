@@ -44,7 +44,6 @@
  */
 #define __s2_pgd_ptrs(pa, lvls)	(1 << ((pa) - pt_levels_pgdir_shift((lvls))))
 
-#define kvm_stage2_levels(kvm)		stage2_pt_levels(kvm_phys_shift(kvm))
 #define stage2_pgdir_shift(kvm)	\
 		pt_levels_pgdir_shift(kvm_stage2_levels(kvm))
 #define stage2_pgdir_size(kvm)		(_AC(1, UL) << stage2_pgdir_shift((kvm)))

@@ -60,12 +60,22 @@ struct kvm_arch {
 	u64    vmid_gen;
 	u32    vmid;
 
-	/* 1-level 2nd stage table and lock */
-	spinlock_t pgd_lock;
+	/* stage-2 page table */
 	pgd_t *pgd;
 
 	/* VTTBR value associated with above pgd and vmid */
 	u64    vttbr;
+
+	/* Private bits of VTCR_EL2 for this VM */
+	u64    vtcr_private;
+	/* Size of the PA size for this guest */
+	u8     phys_shift;
+	/*
+	 * Number of levels in page table. We could always calculate
+	 * it from phys_shift above. We cache it for faster switches
+	 * in stage2 page table helpers.
+	 */
+	u8     s2_levels;
 
 	/* The last vcpu id that ran on each physical CPU */
 	int __percpu *last_vcpu_ran;

@@ -753,6 +753,10 @@ int kvm_alloc_stage2_pgd(struct kvm *kvm)
 		return -EINVAL;
 	}
 
+	/* Make sure we have the stage2 configured for this VM */
+	if (WARN_ON(!kvm_stage2_levels(kvm)))
+		return -EINVAL;
+
 	/* Allocate the HW PGD, making sure that each page gets its own refcount */
 	pgd = alloc_pages_exact(stage2_pgd_size(kvm), GFP_KERNEL | __GFP_ZERO);
 	if (!pgd)
