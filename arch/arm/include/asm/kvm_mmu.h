@@ -323,6 +323,8 @@ static inline u32 kvm_get_ipa_limit(void)
 	return KVM_PHYS_SHIFT;
 }
 
+static inline void kvm_config_stage2(struct kvm *kvm, u32 ipa_shift) {}
+
 #endif	/* !__ASSEMBLY__ */
 
 #endif /* __ARM_KVM_MMU_H__ */
