@@ -3500,6 +3500,20 @@ Returns: 0 on success; -1 on error
 This ioctl can be used to unregister the guest memory region registered
 with KVM_MEMORY_ENCRYPT_REG_REGION ioctl above.
 
+4.113 KVM_ARM_GET_MAX_VM_PHYS_SHIFT
+Capability: basic
+Architectures: arm, arm64
+Type: system ioctl
+Parameters: none
+Returns: log2(Maximum physical address space size) supported by the
+hyperviosr.
+
+This ioctl can be used to identify the maximum physical address space size
+supported by the hypervisor. The returned value indicates the maximum size
+of the address that can be resolved by the stage2 translation table on
+arm/arm64. On arm64, the value is decided based on the host kernel
+configuration and the system wide safe value of ID_AA64MMFR0_EL1:PARange.
+This may not match the value exposed to the VM in CPU ID registers.
 
 5. The kvm_run structure
 ------------------------

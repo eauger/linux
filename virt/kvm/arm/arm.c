@@ -64,6 +64,7 @@ static atomic64_t kvm_vmid_gen = ATOMIC64_INIT(1);
 static u32 kvm_next_vmid;
 static unsigned int kvm_vmid_bits __read_mostly;
 static DEFINE_SPINLOCK(kvm_vmid_lock);
+static u32 kvm_ipa_limit;
 
 static bool vgic_present;
 
@@ -246,6 +247,9 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 long kvm_arch_dev_ioctl(struct file *filp,
 			unsigned int ioctl, unsigned long arg)
 {
+	if (ioctl == KVM_ARM_GET_MAX_VM_PHYS_SHIFT)
+		return kvm_ipa_limit;
+
 	return -EINVAL;
 }
 
@@ -1347,6 +1351,8 @@ static int init_common_resources(void)
 	/* set size of VMID supported by CPU */
 	kvm_vmid_bits = kvm_get_vmid_bits();
 	kvm_info("%d-bit VMID\n", kvm_vmid_bits);
+
+	kvm_ipa_limit = kvm_get_ipa_limit();
 
 	return 0;
 }

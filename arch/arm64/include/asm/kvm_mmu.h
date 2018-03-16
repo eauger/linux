@@ -411,5 +411,10 @@ static inline u64 kvm_vttbr_baddr_mask(struct kvm *kvm)
 	return GENMASK_ULL(PHYS_MASK_SHIFT - 1, x);
 }
 
+static inline u32 kvm_get_ipa_limit(void)
+{
+	return KVM_PHYS_SHIFT;
+}
+
 #endif /* __ASSEMBLY__ */
 #endif /* __ARM64_KVM_MMU_H__ */

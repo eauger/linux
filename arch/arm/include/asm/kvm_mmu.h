@@ -318,6 +318,11 @@ static inline int kvm_map_vectors(void)
 
 #define kvm_phys_to_vttbr(addr)		(addr)
 
+static inline u32 kvm_get_ipa_limit(void)
+{
+	return KVM_PHYS_SHIFT;
+}
+
 #endif	/* !__ASSEMBLY__ */
 
 #endif /* __ARM_KVM_MMU_H__ */
