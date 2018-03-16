@@ -414,7 +414,23 @@ static inline u64 kvm_vttbr_baddr_mask(struct kvm *kvm)
 
 static inline u32 kvm_get_ipa_limit(void)
 {
-	return KVM_PHYS_SHIFT;
+	unsigned int ipa_max, parange;
+
+	parange = read_sanitised_ftr_reg(SYS_ID_AA64MMFR0_EL1) & 0x7;
+	ipa_max = id_aa64mmfr0_parange_to_phys_shift(parange);
+
+	/* Raise the limit to the default size for backward compatibility */
+	if (ipa_max < KVM_PHYS_SHIFT) {
+		WARN_ONCE(1,
+			  "PARange is %d bits, unsupported configuration!",
+			  ipa_max);
+		ipa_max = KVM_PHYS_SHIFT;
+	}
+
+	/* Clamp it to the size supported by the kernel */
+	ipa_max = (ipa_max > PHYS_MASK_SHIFT) ? PHYS_MASK_SHIFT : ipa_max;
+
+	return ipa_max;
 }
 
 static inline void kvm_config_stage2(struct kvm *kvm, u8 ipa_shift)
