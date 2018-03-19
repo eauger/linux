@@ -333,7 +333,6 @@ static u64 vgic_sanitise_pendbaser(u64 reg)
 				  vgic_sanitise_outer_cacheability);
 
 	reg &= ~PENDBASER_RES0_MASK;
-	reg &= ~GENMASK_ULL(51, 48);
 
 	return reg;
 }
@@ -351,7 +350,6 @@ static u64 vgic_sanitise_propbaser(u64 reg)
 				  vgic_sanitise_outer_cacheability);
 
 	reg &= ~PROPBASER_RES0_MASK;
-	reg &= ~GENMASK_ULL(51, 48);
 	return reg;
 }
 
