@@ -324,7 +324,10 @@ static void kvm_vgic_dist_destroy(struct kvm *kvm)
 	dist->ready = false;
 	dist->initialized = false;
 
-	kfree(dist->spis);
+	if (dist->spis) {
+		kfree(dist->spis);
+		dist->spis = NULL;
+	}
 	dist->nr_spis = 0;
 
 	if (vgic_supports_direct_msis(kvm))
