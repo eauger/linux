@@ -65,7 +65,8 @@ int kvm_vgic_addr(struct kvm *kvm, unsigned long type, u64 *addr, bool write)
 {
 	int r = 0;
 	struct vgic_dist *vgic = &kvm->arch.vgic;
-	phys_addr_t *addr_ptr, alignment;
+	phys_addr_t *addr_ptr = NULL;
+	phys_addr_t alignment;
 	uint64_t undef_value = VGIC_ADDR_UNDEF;
 
 	mutex_lock(&kvm->lock);
@@ -92,7 +93,7 @@ int kvm_vgic_addr(struct kvm *kvm, unsigned long type, u64 *addr, bool write)
 		if (r)
 			break;
 		if (write) {
-			r = vgic_v3_set_redist_base(kvm, *addr);
+			r = vgic_v3_set_redist_base(kvm, 0, *addr, 0);
 			goto out;
 		}
 		rdreg = list_first_entry(&vgic->rd_regions,
@@ -101,6 +102,40 @@ int kvm_vgic_addr(struct kvm *kvm, unsigned long type, u64 *addr, bool write)
 			addr_ptr = &undef_value;
 		else
 			addr_ptr = &rdreg->base;
+		break;
+	}
+	case KVM_VGIC_V3_ADDR_TYPE_REDIST_REGION:
+	{
+		struct vgic_redist_region *rdreg;
+		uint8_t index;
+
+		r = vgic_check_type(kvm, KVM_DEV_TYPE_ARM_VGIC_V3);
+		if (r)
+			break;
+
+		index = *addr & KVM_VGIC_V3_RDIST_INDEX_MASK;
+
+		if (write) {
+			gpa_t base = *addr & KVM_VGIC_V3_RDIST_BASE_MASK;
+			uint32_t count = (*addr & KVM_VGIC_V3_RDIST_COUNT_MASK)
+					>> KVM_VGIC_V3_RDIST_COUNT_SHIFT;
+			uint8_t flags = (*addr & KVM_VGIC_V3_RDIST_FLAGS_MASK)
+					>> KVM_VGIC_V3_RDIST_FLAGS_SHIFT;
+
+			if (!count || flags)
+				r = -EINVAL;
+			else
+				r = vgic_v3_set_redist_base(kvm, index,
+							    base, count);
+			goto out;
+		}
+
+		rdreg = vgic_v3_rdist_region_from_index(kvm, index);
+		if (!rdreg)
+			r = -ENODEV;
+
+		*addr_ptr = rdreg->base & index &
+			(uint64_t)rdreg->count << KVM_VGIC_V3_RDIST_COUNT_SHIFT;
 		break;
 	}
 	default:
@@ -674,6 +709,7 @@ static int vgic_v3_has_attr(struct kvm_device *dev,
 		switch (attr->attr) {
 		case KVM_VGIC_V3_ADDR_TYPE_DIST:
 		case KVM_VGIC_V3_ADDR_TYPE_REDIST:
+		case KVM_VGIC_V3_ADDR_TYPE_REDIST_REGION:
 			return 0;
 		}
 		break;
