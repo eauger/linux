@@ -1393,6 +1393,16 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(iommu_attach_device);
 
+int iommu_set_pasid_table(struct iommu_domain *domain,
+			  struct iommu_pasid_table_config *cfg)
+{
+	if (unlikely(!domain->ops->set_pasid_table))
+		return -ENODEV;
+
+	return domain->ops->set_pasid_table(domain, cfg);
+}
+EXPORT_SYMBOL_GPL(iommu_set_pasid_table);
+
 static void __iommu_detach_device(struct iommu_domain *domain,
 				  struct device *dev)
 {

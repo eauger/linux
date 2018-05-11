@@ -25,6 +25,7 @@
 #include <linux/errno.h>
 #include <linux/err.h>
 #include <linux/of.h>
+#include <uapi/linux/iommu.h>
 
 #define IOMMU_READ	(1 << 0)
 #define IOMMU_WRITE	(1 << 1)
@@ -184,6 +185,7 @@ struct iommu_resv_region {
  * @domain_window_disable: Disable a particular window for a domain
  * @of_xlate: add OF master IDs to iommu grouping
  * @pgsize_bitmap: bitmap of all possible supported page sizes
+ * @set_pasid_table: set pasid table
  */
 struct iommu_ops {
 	bool (*capable)(enum iommu_cap);
@@ -225,6 +227,9 @@ struct iommu_ops {
 
 	int (*of_xlate)(struct device *dev, struct of_phandle_args *args);
 	bool (*is_attach_deferred)(struct iommu_domain *domain, struct device *dev);
+
+	int (*set_pasid_table)(struct iommu_domain *domain,
+			       struct iommu_pasid_table_config *cfg);
 
 	unsigned long pgsize_bitmap;
 };
@@ -287,6 +292,8 @@ extern int iommu_attach_device(struct iommu_domain *domain,
 			       struct device *dev);
 extern void iommu_detach_device(struct iommu_domain *domain,
 				struct device *dev);
+extern int iommu_set_pasid_table(struct iommu_domain *domain,
+				 struct iommu_pasid_table_config *cfg);
 extern struct iommu_domain *iommu_get_domain_for_dev(struct device *dev);
 extern struct iommu_domain *iommu_get_dma_domain(struct device *dev);
 extern int iommu_map(struct iommu_domain *domain, unsigned long iova,
@@ -694,6 +701,13 @@ static inline
 const struct iommu_ops *iommu_ops_from_fwnode(struct fwnode_handle *fwnode)
 {
 	return NULL;
+}
+
+static inline
+int iommu_set_pasid_table(struct iommu_domain *domain,
+			  struct iommu_pasid_table_config *cfg)
+{
+	return -ENODEV;
 }
 
 #endif /* CONFIG_IOMMU_API */
