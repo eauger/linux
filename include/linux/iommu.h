@@ -190,6 +190,7 @@ struct iommu_resv_region {
  * @pgsize_bitmap: bitmap of all possible supported page sizes
  * @bind_guest_stage: program the guest stage configuration
  * @unbind_guest_stage: unbind the guest stage and restore defaults
+ * @tlb_invalidate: invalidate translation caches
  */
 struct iommu_ops {
 	bool (*capable)(enum iommu_cap);
@@ -242,6 +243,9 @@ struct iommu_ops {
 				struct iommu_guest_stage_config *cfg);
 	void (*unbind_guest_stage)(struct iommu_domain *domain,
 				   struct device *dev);
+
+	int (*tlb_invalidate)(struct iommu_domain *domain, struct device *dev,
+			      struct iommu_tlb_invalidate_info *inv_info);
 
 	unsigned long pgsize_bitmap;
 };
@@ -308,6 +312,10 @@ extern int iommu_bind_guest_stage(struct iommu_domain *domain,
 		struct device *dev, struct iommu_guest_stage_config *cfg);
 extern void iommu_unbind_guest_stage(struct iommu_domain *domain,
 				     struct device *dev);
+extern int iommu_tlb_invalidate(struct iommu_domain *domain,
+				struct device *dev,
+				struct iommu_tlb_invalidate_info *inv_info);
+
 extern struct iommu_domain *iommu_get_domain_for_dev(struct device *dev);
 extern int iommu_map(struct iommu_domain *domain, unsigned long iova,
 		     phys_addr_t paddr, size_t size, int prot);
@@ -717,6 +725,11 @@ int iommu_bind_guest_stage(struct iommu_domain *domain, struct device *dev,
 static inline
 void iommu_unbind_guest_stage(struct iommu_domain *domain, struct device *dev)
 {
+}
+static inline int iommu_tlb_invalidate(struct iommu_domain *domain,
+		struct device *dev, struct iommu_tlb_invalidate_info *inv_info)
+{
+	return -ENODEV;
 }
 
 #endif /* CONFIG_IOMMU_API */
