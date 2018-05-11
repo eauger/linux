@@ -1345,6 +1345,20 @@ void iommu_unbind_guest_stage(struct iommu_domain *domain)
 }
 EXPORT_SYMBOL_GPL(iommu_unbind_guest_stage);
 
+int iommu_tlb_invalidate(struct iommu_domain *domain,
+			 struct iommu_tlb_invalidate_info *inv_info)
+{
+	int ret = 0;
+
+	if (unlikely(!domain->ops->tlb_invalidate))
+		return -ENODEV;
+
+	ret = domain->ops->tlb_invalidate(domain, inv_info);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(iommu_tlb_invalidate);
+
 static void __iommu_detach_device(struct iommu_domain *domain,
 				  struct device *dev)
 {
