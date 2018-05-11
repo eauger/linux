@@ -148,4 +148,87 @@ struct iommu_guest_msi_binding {
 	__u64		gpa;
 	__u32		granule;
 };
+
+/*  Generic fault types, can be expanded IRQ remapping fault */
+enum iommu_fault_type {
+	IOMMU_FAULT_DMA_UNRECOV = 1,	/* unrecoverable fault */
+	IOMMU_FAULT_PAGE_REQ,		/* page request fault */
+};
+
+enum iommu_fault_reason {
+	IOMMU_FAULT_REASON_UNKNOWN = 0,
+
+	/* IOMMU internal error, no specific reason to report out */
+	IOMMU_FAULT_REASON_INTERNAL,
+
+	/* Could not access the PASID table (fetch caused external abort) */
+	IOMMU_FAULT_REASON_PASID_FETCH,
+
+	/* could not access the device context (fetch caused external abort) */
+	IOMMU_FAULT_REASON_DEVICE_CONTEXT_FETCH,
+
+	/* pasid entry is invalid or has configuration errors */
+	IOMMU_FAULT_REASON_BAD_PASID_ENTRY,
+
+	/* device context entry is invalid or has configuration errors */
+	IOMMU_FAULT_REASON_BAD_DEVICE_CONTEXT_ENTRY,
+	/*
+	 * PASID is out of range (e.g. exceeds the maximum PASID
+	 * supported by the IOMMU) or disabled.
+	 */
+	IOMMU_FAULT_REASON_PASID_INVALID,
+
+	/* source id is out of range */
+	IOMMU_FAULT_REASON_SOURCEID_INVALID,
+
+	/*
+	 * An external abort occurred fetching (or updating) a translation
+	 * table descriptor
+	 */
+	IOMMU_FAULT_REASON_WALK_EABT,
+
+	/*
+	 * Could not access the page table entry (Bad address),
+	 * actual translation fault
+	 */
+	IOMMU_FAULT_REASON_PTE_FETCH,
+
+	/* Protection flag check failed */
+	IOMMU_FAULT_REASON_PERMISSION,
+
+	/* access flag check failed */
+	IOMMU_FAULT_REASON_ACCESS,
+
+	/* Output address of a translation stage caused Address Size fault */
+	IOMMU_FAULT_REASON_OOR_ADDRESS
+};
+
+/**
+ * struct iommu_fault - Generic fault data
+ *
+ * @type contains fault type
+ * @reason fault reasons if relevant outside IOMMU driver.
+ * IOMMU driver internal faults are not reported.
+ * @addr: tells the offending page address
+ * @fetch_addr: tells the address that caused an abort, if any
+ * @pasid: contains process address space ID, used in shared virtual memory
+ * @page_req_group_id: page request group index
+ * @last_req: last request in a page request group
+ * @pasid_valid: indicates if the PRQ has a valid PASID
+ * @prot: page access protection flag:
+ *	IOMMU_FAULT_READ, IOMMU_FAULT_WRITE
+ */
+
+struct iommu_fault {
+	__u32	type;   /* enum iommu_fault_type */
+	__u32	reason; /* enum iommu_fault_reason */
+	__u64	addr;
+	__u64	fetch_addr;
+	__u32	pasid;
+	__u32	page_req_group_id;
+	__u32	last_req;
+	__u32	pasid_valid;
+	__u32	prot;
+	__u32	access;
+};
 #endif /* _UAPI_IOMMU_H */
