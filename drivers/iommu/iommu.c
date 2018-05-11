@@ -1326,6 +1326,25 @@ out_unlock:
 }
 EXPORT_SYMBOL_GPL(iommu_attach_device);
 
+int iommu_bind_guest_stage(struct iommu_domain *domain, struct device *dev,
+			   struct iommu_guest_stage_config *cfg)
+{
+	if (unlikely(!domain->ops->bind_guest_stage))
+		return -ENODEV;
+
+	return domain->ops->bind_guest_stage(domain, dev, cfg);
+}
+EXPORT_SYMBOL_GPL(iommu_bind_guest_stage);
+
+void iommu_unbind_guest_stage(struct iommu_domain *domain, struct device *dev)
+{
+	if (unlikely(!domain->ops->unbind_guest_stage))
+		return;
+
+	domain->ops->unbind_guest_stage(domain, dev);
+}
+EXPORT_SYMBOL_GPL(iommu_unbind_guest_stage);
+
 static void __iommu_detach_device(struct iommu_domain *domain,
 				  struct device *dev)
 {
