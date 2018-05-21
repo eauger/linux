@@ -29,6 +29,7 @@
 #include <linux/vfio.h>
 #include <linux/vgaarb.h>
 #include <linux/nospec.h>
+#include <linux/circ_buf.h>
 
 #include "vfio_pci_private.h"
 
@@ -1296,6 +1297,44 @@ static const struct vfio_pci_regops vfio_pci_dma_fault_regops = {
 	.release	= vfio_pci_dma_fault_release,
 };
 
+int vfio_pci_iommu_dev_fault_handler(struct iommu_fault_event *evt, void *data)
+{
+	struct vfio_pci_device *vdev = (struct vfio_pci_device *) data;
+	int prod, cons, size;
+	unsigned long flags;
+
+	spin_lock_irqsave(&vdev->fault_queue_lock, flags);
+	prod = vdev->fault_region->header.prod;
+	cons = vdev->fault_region->header.cons;
+	size = vdev->fault_region->header.size;
+
+	if (cons > VFIO_FAULT_QUEUE_SIZE - 1)
+		goto unlock;
+	if (prod > VFIO_FAULT_QUEUE_SIZE - 1)
+		goto unlock;
+	if (size != VFIO_FAULT_QUEUE_SIZE)
+		goto unlock;
+	if (vdev->fault_region->header.reserved)
+		goto unlock;
+	if (CIRC_SPACE(prod, cons, size) < 1)
+		goto unlock;
+
+	vdev->fault_region->queue[prod] = evt->fault;
+	prod = (prod + 1) % size;
+	vdev->fault_region->header.prod = prod;
+	spin_unlock_irqrestore(&vdev->fault_queue_lock, flags);
+
+	mutex_lock(&vdev->igate);
+	if (vdev->dma_fault_trigger)
+		eventfd_signal(vdev->dma_fault_trigger, 1);
+	mutex_unlock(&vdev->igate);
+	return 0;
+
+unlock:
+	spin_unlock_irqrestore(&vdev->fault_queue_lock, flags);
+	return -EINVAL;
+}
+
 static int vfio_pci_init_dma_fault_region(struct vfio_pci_device *vdev)
 {
 	u32 flags = VFIO_REGION_INFO_FLAG_READ | VFIO_REGION_INFO_FLAG_WRITE |
@@ -1322,7 +1361,9 @@ static int vfio_pci_init_dma_fault_region(struct vfio_pci_device *vdev)
 	vdev->fault_region->header.cons = 0;
 	vdev->fault_region->header.reserved = 0;
 	vdev->fault_region->header.size = VFIO_FAULT_QUEUE_SIZE;
-	return 0;
+	return iommu_register_device_fault_handler(&vdev->pdev->dev,
+					vfio_pci_iommu_dev_fault_handler,
+					vdev);
 }
 
 static int vfio_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
@@ -1414,6 +1455,7 @@ static void vfio_pci_remove(struct pci_dev *pdev)
 
 	vfio_iommu_group_put(pdev->dev.iommu_group, &pdev->dev);
 	kfree(vdev->region);
+	iommu_unregister_device_fault_handler(&pdev->dev);
 	kfree(vdev->fault_region);
 	mutex_destroy(&vdev->ioeventfds_lock);
 	kfree(vdev);

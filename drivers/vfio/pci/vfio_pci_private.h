@@ -120,6 +120,7 @@ struct vfio_pci_device {
 	int			ioeventfds_nr;
 	struct eventfd_ctx	*err_trigger;
 	struct eventfd_ctx	*req_trigger;
+	struct eventfd_ctx	*dma_fault_trigger;
 	spinlock_t              fault_queue_lock;
 	struct vfio_fault_region *fault_region;
 	struct list_head	dummy_resources_list;
