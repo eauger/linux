@@ -277,6 +277,79 @@ ssize_t vfio_pci_vga_rw(struct vfio_pci_device *vdev, char __user *buf,
 	return done;
 }
 
+/* Read-only region */
+size_t vfio_pci_fault_prod_rw(struct vfio_pci_device *vdev, char __user *buf,
+			      size_t count, loff_t *ppos, bool iswrite)
+{
+	unsigned int i = VFIO_PCI_OFFSET_TO_INDEX(*ppos) - VFIO_PCI_NUM_REGIONS;
+	void *base = vdev->region[i].data;
+	loff_t pos = *ppos & VFIO_PCI_OFFSET_MASK;
+	int ret = 0;
+
+	if (iswrite)
+		return 0;
+
+	if (!vdev->fault_abi)
+		return -EINVAL;
+
+	if (pos >= vdev->region[i].size)
+		return -EINVAL;
+
+	count = min(count, (size_t)(vdev->region[i].size - pos));
+
+	mutex_lock(&vdev->fault_queue_lock);
+
+	if (copy_to_user(buf, base + pos, count)) {
+		ret = -EFAULT;
+		goto unlock;
+	}
+	*ppos += count;
+	ret = count;
+unlock:
+	mutex_unlock(&vdev->fault_queue_lock);
+	return ret;
+}
+
+
+/* write only */
+size_t vfio_pci_fault_cons_rw(struct vfio_pci_device *vdev, char __user *buf,
+			      size_t count, loff_t *ppos, bool iswrite)
+{
+	unsigned int i = VFIO_PCI_OFFSET_TO_INDEX(*ppos) - VFIO_PCI_NUM_REGIONS;
+	void *base = vdev->region[i].data;
+	loff_t pos = *ppos & VFIO_PCI_OFFSET_MASK;
+	struct vfio_region_fault_cons *header;
+	struct vfio_region_fault_cons orig_header =
+		*(struct vfio_region_fault_cons *)base;
+	int ret = 0;
+
+	if (!iswrite)
+		return 0;
+
+	if (pos >= vdev->region[i].size)
+		return -EINVAL;
+
+	count = min(count, (size_t)(vdev->region[i].size - pos));
+
+	mutex_lock(&vdev->fault_queue_lock);
+
+	if (copy_from_user(base + pos, buf, count)) {
+		ret = -EFAULT;
+		goto unlock;
+	}
+	header = (struct vfio_region_fault_cons *)base;
+	ret = vfio_pci_check_cons_fault(vdev, header);
+	if (ret) {
+		*header = orig_header;
+		goto unlock;
+	}
+	*ppos += count;
+	ret = count;
+unlock:
+	mutex_unlock(&vdev->fault_queue_lock);
+	return ret;
+}
+
 static int vfio_pci_ioeventfd_handler(void *opaque, void *unused)
 {
 	struct vfio_pci_ioeventfd *ioeventfd = opaque;
