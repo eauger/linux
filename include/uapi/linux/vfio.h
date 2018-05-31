@@ -307,6 +307,9 @@ struct vfio_region_info_cap_type {
 #define VFIO_REGION_TYPE_GFX                    (1)
 #define VFIO_REGION_SUBTYPE_GFX_EDID            (1)
 
+#define VFIO_REGION_TYPE_NESTED			(2)
+#define VFIO_REGION_SUBTYPE_NESTED_FAULT_REGION	(1)
+
 /**
  * struct vfio_region_gfx_edid - EDID region layout.
  *
@@ -696,6 +699,18 @@ struct vfio_device_ioeventfd {
 };
 
 #define VFIO_DEVICE_IOEVENTFD		_IO(VFIO_TYPE, VFIO_BASE + 16)
+
+struct vfio_fault_region_header {
+	__u32	size;		/* Read-Only */
+	__u32	prod;		/* Read-Only */
+	__u32	cons;
+	__u32	reserved;	/* must be 0 */
+};
+
+struct vfio_fault_region {
+	struct vfio_fault_region_header header;
+	struct iommu_fault queue[0];
+};
 
 /* -------- API for Type1 VFIO IOMMU -------- */
 

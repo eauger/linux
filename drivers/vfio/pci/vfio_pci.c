@@ -56,6 +56,11 @@ module_param(disable_idle_d3, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(disable_idle_d3,
 		 "Disable using the PCI D3 low power state for idle, unused devices");
 
+#define VFIO_FAULT_REGION_SIZE 0x10000
+#define VFIO_FAULT_QUEUE_SIZE	\
+	((VFIO_FAULT_REGION_SIZE - sizeof(struct vfio_fault_region_header)) / \
+	sizeof(struct iommu_fault))
+
 static inline bool vfio_vga_disabled(void)
 {
 #ifdef CONFIG_VFIO_PCI_VGA
@@ -1226,6 +1231,100 @@ static const struct vfio_device_ops vfio_pci_ops = {
 static int vfio_pci_reflck_attach(struct vfio_pci_device *vdev);
 static void vfio_pci_reflck_put(struct vfio_pci_reflck *reflck);
 
+static size_t
+vfio_pci_dma_fault_rw(struct vfio_pci_device *vdev, char __user *buf,
+		      size_t count, loff_t *ppos, bool iswrite)
+{
+	unsigned int i = VFIO_PCI_OFFSET_TO_INDEX(*ppos) - VFIO_PCI_NUM_REGIONS;
+	void *base = vdev->region[i].data;
+	loff_t pos = *ppos & VFIO_PCI_OFFSET_MASK;
+
+	if (pos >= vdev->region[i].size)
+		return -EINVAL;
+
+	count = min(count, (size_t)(vdev->region[i].size - pos));
+
+	if (copy_to_user(buf, base + pos, count))
+		return -EFAULT;
+
+	*ppos += count;
+
+	return count;
+}
+
+static int vfio_pci_dma_fault_mmap(struct vfio_pci_device *vdev,
+				   struct vfio_pci_region *region,
+				   struct vm_area_struct *vma)
+{
+	u64 phys_len, req_len, pgoff, req_start;
+	unsigned long long addr;
+	unsigned int index;
+
+	index = vma->vm_pgoff >> (VFIO_PCI_OFFSET_SHIFT - PAGE_SHIFT);
+
+	if (vma->vm_end < vma->vm_start)
+		return -EINVAL;
+	if ((vma->vm_flags & VM_SHARED) == 0)
+		return -EINVAL;
+
+	phys_len = VFIO_FAULT_REGION_SIZE;
+
+	req_len = vma->vm_end - vma->vm_start;
+	pgoff = vma->vm_pgoff &
+		((1U << (VFIO_PCI_OFFSET_SHIFT - PAGE_SHIFT)) - 1);
+	req_start = pgoff << PAGE_SHIFT;
+
+	if (req_start + req_len > phys_len)
+		return -EINVAL;
+
+	addr = virt_to_phys(vdev->fault_region);
+	vma->vm_private_data = vdev;
+	vma->vm_pgoff = (addr >> PAGE_SHIFT) + pgoff;
+
+	return remap_pfn_range(vma, vma->vm_start, vma->vm_pgoff,
+			       req_len, vma->vm_page_prot);
+}
+
+void vfio_pci_dma_fault_release(struct vfio_pci_device *vdev,
+				struct vfio_pci_region *region)
+{
+}
+
+static const struct vfio_pci_regops vfio_pci_dma_fault_regops = {
+	.rw		= vfio_pci_dma_fault_rw,
+	.mmap		= vfio_pci_dma_fault_mmap,
+	.release	= vfio_pci_dma_fault_release,
+};
+
+static int vfio_pci_init_dma_fault_region(struct vfio_pci_device *vdev)
+{
+	u32 flags = VFIO_REGION_INFO_FLAG_READ | VFIO_REGION_INFO_FLAG_WRITE |
+		    VFIO_REGION_INFO_FLAG_MMAP;
+	int ret;
+
+	spin_lock_init(&vdev->fault_queue_lock);
+
+	vdev->fault_region = kmalloc(VFIO_FAULT_REGION_SIZE, GFP_KERNEL);
+	if (!vdev->fault_region)
+		return -ENOMEM;
+
+	ret = vfio_pci_register_dev_region(vdev,
+		VFIO_REGION_TYPE_NESTED,
+		VFIO_REGION_SUBTYPE_NESTED_FAULT_REGION,
+		&vfio_pci_dma_fault_regops, VFIO_FAULT_REGION_SIZE,
+		flags, vdev->fault_region);
+	if (ret) {
+		kfree(vdev->fault_region);
+		return ret;
+	}
+
+	vdev->fault_region->header.prod = 0;
+	vdev->fault_region->header.cons = 0;
+	vdev->fault_region->header.reserved = 0;
+	vdev->fault_region->header.size = VFIO_FAULT_QUEUE_SIZE;
+	return 0;
+}
+
 static int vfio_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct vfio_pci_device *vdev;
@@ -1300,7 +1399,7 @@ static int vfio_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		pci_set_power_state(pdev, PCI_D3hot);
 	}
 
-	return ret;
+	return vfio_pci_init_dma_fault_region(vdev);
 }
 
 static void vfio_pci_remove(struct pci_dev *pdev)
@@ -1315,6 +1414,7 @@ static void vfio_pci_remove(struct pci_dev *pdev)
 
 	vfio_iommu_group_put(pdev->dev.iommu_group, &pdev->dev);
 	kfree(vdev->region);
+	kfree(vdev->fault_region);
 	mutex_destroy(&vdev->ioeventfds_lock);
 	kfree(vdev);
 
