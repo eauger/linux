@@ -307,6 +307,10 @@ struct vfio_region_info_cap_type {
 #define VFIO_REGION_TYPE_GFX                    (1)
 #define VFIO_REGION_SUBTYPE_GFX_EDID            (1)
 
+#define VFIO_REGION_TYPE_NESTED			(2)
+#define VFIO_REGION_SUBTYPE_NESTED_FAULT_PROD	(1)
+#define VFIO_REGION_SUBTYPE_NESTED_FAULT_CONS	(2)
+
 /**
  * struct vfio_region_gfx_edid - EDID region layout.
  *
@@ -700,6 +704,44 @@ struct vfio_device_ioeventfd {
 };
 
 #define VFIO_DEVICE_IOEVENTFD		_IO(VFIO_TYPE, VFIO_BASE + 16)
+
+
+/*
+ * Capability exposed by the Producer Fault Region
+ * @version: max fault ABI version supported by the kernel
+ */
+#define VFIO_REGION_INFO_CAP_PRODUCER_FAULT	6
+
+struct vfio_region_info_cap_fault {
+	struct vfio_info_cap_header header;
+	__u32 version;
+};
+
+/*
+ * Producer Fault Region (Read-Only from user space perspective)
+ * Contains the fault circular buffer and the producer index
+ * @version: version of the fault record uapi
+ * @entry_size: size of each fault record
+ * @offset: offset of the start of the queue
+ * @prod: producer index relative to the start of the queue
+ */
+struct vfio_region_fault_prod {
+	__u32   version;
+	__u32	nb_entries;
+	__u32   entry_size;
+	__u32	offset;
+	__u32   prod;
+};
+
+/*
+ * Consumer Fault Region (Write-Only from the user space perspective)
+ * @version: ABI version requested by the userspace
+ * @cons: consumer index relative to the start of the queue
+ */
+struct vfio_region_fault_cons {
+	__u32 version;
+	__u32 cons;
+};
 
 /* -------- API for Type1 VFIO IOMMU -------- */
 
