@@ -48,6 +48,7 @@ struct viommu_dev {
 	struct iommu_domain_geometry	geometry;
 	u64				pgsize_bitmap;
 	u8				domain_bits;
+	u32				probe_size;
 };
 
 struct viommu_mapping {
@@ -69,8 +70,10 @@ struct viommu_domain {
 };
 
 struct viommu_endpoint {
+	struct device			*dev;
 	struct viommu_dev		*viommu;
 	struct viommu_domain		*vdomain;
+	struct list_head		resv_regions;
 };
 
 struct viommu_request {
@@ -120,6 +123,9 @@ static off_t viommu_get_req_offset(struct viommu_dev *viommu,
 				   size_t len)
 {
 	size_t tail_size = sizeof(struct virtio_iommu_req_tail);
+
+	if (req->type == VIRTIO_IOMMU_T_PROBE)
+		return len - viommu->probe_size - tail_size;
 
 	return len - tail_size;
 }
@@ -404,6 +410,103 @@ static int viommu_replay_mappings(struct viommu_domain *vdomain)
 	return ret;
 }
 
+static int viommu_add_resv_mem(struct viommu_endpoint *vdev,
+			       struct virtio_iommu_probe_resv_mem *mem,
+			       size_t len)
+{
+	struct iommu_resv_region *region = NULL;
+	unsigned long prot = IOMMU_WRITE | IOMMU_NOEXEC | IOMMU_MMIO;
+
+	u64 start = le64_to_cpu(mem->start);
+	u64 end = le64_to_cpu(mem->end);
+	size_t size = end - start + 1;
+
+	if (len < sizeof(*mem))
+		return -EINVAL;
+
+	switch (mem->subtype) {
+	default:
+		if (mem->subtype != VIRTIO_IOMMU_RESV_MEM_T_RESERVED &&
+		    mem->subtype != VIRTIO_IOMMU_RESV_MEM_T_MSI)
+			dev_warn(vdev->dev, "unknown resv mem subtype 0x%x\n",
+				 mem->subtype);
+		/* Fall-through */
+	case VIRTIO_IOMMU_RESV_MEM_T_RESERVED:
+		region = iommu_alloc_resv_region(start, size, 0,
+						 IOMMU_RESV_RESERVED);
+		break;
+	case VIRTIO_IOMMU_RESV_MEM_T_MSI:
+		region = iommu_alloc_resv_region(start, size, prot,
+						 IOMMU_RESV_MSI);
+		break;
+	}
+
+	list_add(&vdev->resv_regions, &region->list);
+	return 0;
+}
+
+static int viommu_probe_endpoint(struct viommu_dev *viommu, struct device *dev)
+{
+	int ret;
+	u16 type, len;
+	size_t cur = 0;
+	size_t probe_len;
+	struct virtio_iommu_req_probe *probe;
+	struct virtio_iommu_probe_property *prop;
+	struct iommu_fwspec *fwspec = dev->iommu_fwspec;
+	struct viommu_endpoint *vdev = fwspec->iommu_priv;
+
+	if (!fwspec->num_ids)
+		return -EINVAL;
+
+	probe_len = sizeof(*probe) + viommu->probe_size +
+		    sizeof(struct virtio_iommu_req_tail);
+	probe = kzalloc(probe_len, GFP_KERNEL);
+	if (!probe)
+		return -ENOMEM;
+
+	probe->head.type = VIRTIO_IOMMU_T_PROBE;
+	/*
+	 * For now, assume that properties of an endpoint that outputs multiple
+	 * IDs are consistent. Only probe the first one.
+	 */
+	probe->endpoint = cpu_to_le32(fwspec->ids[0]);
+
+	ret = viommu_send_req_sync(viommu, probe, probe_len);
+	if (ret)
+		goto out_free;
+
+	prop = (void *)probe->properties;
+	type = le16_to_cpu(prop->type) & VIRTIO_IOMMU_PROBE_T_MASK;
+
+	while (type != VIRTIO_IOMMU_PROBE_T_NONE &&
+	       cur < viommu->probe_size) {
+		len = le16_to_cpu(prop->length);
+
+		switch (type) {
+		case VIRTIO_IOMMU_PROBE_T_RESV_MEM:
+			ret = viommu_add_resv_mem(vdev, (void *)prop->value, len);
+			break;
+		default:
+			dev_dbg(dev, "unknown viommu prop 0x%x\n", type);
+		}
+
+		if (ret)
+			dev_err(dev, "failed to parse viommu prop 0x%x\n", type);
+
+		cur += sizeof(*prop) + len;
+		if (cur >= viommu->probe_size)
+			break;
+
+		prop = (void *)probe->properties + cur;
+		type = le16_to_cpu(prop->type) & VIRTIO_IOMMU_PROBE_T_MASK;
+	}
+
+out_free:
+	kfree(probe);
+	return ret;
+}
+
 /* IOMMU API */
 
 static struct iommu_domain *viommu_domain_alloc(unsigned type)
@@ -627,15 +730,33 @@ static void viommu_iotlb_sync(struct iommu_domain *domain)
 
 static void viommu_get_resv_regions(struct device *dev, struct list_head *head)
 {
-	struct iommu_resv_region *region;
+	struct iommu_resv_region *entry, *new_entry, *msi = NULL;
+	struct viommu_endpoint *vdev = dev->iommu_fwspec->iommu_priv;
 	int prot = IOMMU_WRITE | IOMMU_NOEXEC | IOMMU_MMIO;
 
-	region = iommu_alloc_resv_region(MSI_IOVA_BASE, MSI_IOVA_LENGTH, prot,
-					 IOMMU_RESV_SW_MSI);
-	if (!region)
-		return;
+	list_for_each_entry(entry, &vdev->resv_regions, list) {
+		/*
+		 * If the device registered a bypass MSI windows, use it.
+		 * Otherwise add a software-mapped region
+		 */
+		if (entry->type == IOMMU_RESV_MSI)
+			msi = entry;
 
-	list_add_tail(&region->list, head);
+		new_entry = kmemdup(entry, sizeof(*entry), GFP_KERNEL);
+		if (!new_entry)
+			return;
+		list_add_tail(&new_entry->list, head);
+	}
+
+	if (!msi) {
+		msi = iommu_alloc_resv_region(MSI_IOVA_BASE, MSI_IOVA_LENGTH,
+					      prot, IOMMU_RESV_SW_MSI);
+		if (!msi)
+			return;
+
+		list_add_tail(&msi->list, head);
+	}
+
 	iommu_dma_get_resv_regions(dev, head);
 }
 
@@ -683,8 +804,17 @@ static int viommu_add_device(struct device *dev)
 	if (!vdev)
 		return -ENOMEM;
 
+	vdev->dev = dev;
 	vdev->viommu = viommu;
+	INIT_LIST_HEAD(&vdev->resv_regions);
 	fwspec->iommu_priv = vdev;
+
+	if (viommu->probe_size) {
+		/* Get additional information for this endpoint */
+		ret = viommu_probe_endpoint(viommu, dev);
+		if (ret)
+			return ret;
+	}
 
 	ret = iommu_device_link(&viommu->iommu, dev);
 	if (ret)
@@ -708,6 +838,7 @@ err_unlink_dev:
 	iommu_device_unlink(&viommu->iommu, dev);
 
 err_free_dev:
+	viommu_put_resv_regions(dev, &vdev->resv_regions);
 	kfree(vdev);
 
 	return ret;
@@ -725,6 +856,7 @@ static void viommu_remove_device(struct device *dev)
 
 	iommu_group_remove_device(dev);
 	iommu_device_unlink(&vdev->viommu->iommu, dev);
+	viommu_put_resv_regions(dev, &vdev->resv_regions);
 	kfree(vdev);
 }
 
@@ -821,6 +953,10 @@ static int viommu_probe(struct virtio_device *vdev)
 			     struct virtio_iommu_config, domain_bits,
 			     &viommu->domain_bits);
 
+	virtio_cread_feature(vdev, VIRTIO_IOMMU_F_PROBE,
+			     struct virtio_iommu_config, probe_size,
+			     &viommu->probe_size);
+
 	viommu->geometry = (struct iommu_domain_geometry) {
 		.aperture_start	= input_start,
 		.aperture_end	= input_end,
@@ -902,6 +1038,7 @@ static unsigned int features[] = {
 	VIRTIO_IOMMU_F_MAP_UNMAP,
 	VIRTIO_IOMMU_F_DOMAIN_BITS,
 	VIRTIO_IOMMU_F_INPUT_RANGE,
+	VIRTIO_IOMMU_F_PROBE,
 };
 
 static struct virtio_device_id id_table[] = {
