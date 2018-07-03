@@ -1673,6 +1673,37 @@ static int vfio_domains_have_iommu_cache(struct vfio_iommu *iommu)
 	return ret;
 }
 
+static int vfio_cache_inv_fn(struct device *dev, void *data)
+{
+	struct vfio_iommu_type1_cache_invalidate *ustruct =
+		(struct vfio_iommu_type1_cache_invalidate *)data;
+	struct iommu_domain *d = iommu_get_domain_for_dev(dev);
+
+	return iommu_cache_invalidate(d, dev, &ustruct->info);
+}
+
+static int
+vfio_cache_invalidate(struct vfio_iommu *iommu,
+		      struct vfio_iommu_type1_cache_invalidate *ustruct)
+{
+	struct vfio_domain *d;
+	struct vfio_group *g;
+	int ret = 0;
+
+	mutex_lock(&iommu->lock);
+
+	list_for_each_entry(d, &iommu->domain_list, next) {
+		list_for_each_entry(g, &d->group_list, next) {
+			ret = iommu_group_for_each_dev(g->iommu_group, ustruct,
+						       vfio_cache_inv_fn);
+			if (ret)
+				break;
+		}
+	}
+	mutex_unlock(&iommu->lock);
+	return ret;
+}
+
 static int
 vfio_bind_pasid_table(struct vfio_iommu *iommu,
 		      struct vfio_iommu_type1_bind_pasid_table *ustruct)
@@ -1774,6 +1805,19 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 			return -EINVAL;
 
 		return vfio_bind_pasid_table(iommu, &ustruct);
+	} else if (cmd == VFIO_IOMMU_CACHE_INVALIDATE) {
+		struct vfio_iommu_type1_cache_invalidate ustruct;
+
+		minsz = offsetofend(struct vfio_iommu_type1_cache_invalidate,
+				    info);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		return vfio_cache_invalidate(iommu, &ustruct);
 	}
 
 	return -ENOTTY;
