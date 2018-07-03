@@ -1674,6 +1674,24 @@ static int vfio_domains_have_iommu_cache(struct vfio_iommu *iommu)
 }
 
 static int
+vfio_tlb_invalidate(struct vfio_iommu *iommu,
+		    struct vfio_iommu_type1_tlb_invalidate *ustruct)
+{
+	struct vfio_domain *d;
+	int ret = 0;
+
+	mutex_lock(&iommu->lock);
+
+	list_for_each_entry(d, &iommu->domain_list, next) {
+		ret = iommu_tlb_invalidate(d->domain, &ustruct->info);
+		if (ret)
+			break;
+	}
+	mutex_unlock(&iommu->lock);
+	return ret;
+}
+
+static int
 vfio_bind_guest_stage(struct vfio_iommu *iommu,
 		      struct vfio_iommu_type1_bind_guest_stage *ustruct)
 {
@@ -1774,6 +1792,19 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 			return -EINVAL;
 
 		return vfio_bind_guest_stage(iommu, &ustruct);
+	} else if (cmd == VFIO_IOMMU_TLB_INVALIDATE) {
+		struct vfio_iommu_type1_tlb_invalidate ustruct;
+
+		minsz = offsetofend(struct vfio_iommu_type1_tlb_invalidate,
+				    info);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		return vfio_tlb_invalidate(iommu, &ustruct);
 	}
 
 	return -ENOTTY;
