@@ -1687,6 +1687,15 @@ static int bind_guest_stage_fn(struct device *dev, void *data)
 	return iommu_bind_guest_stage(task->domain, dev, &ustruct->config);
 }
 
+static int do_tlb_inv_fn(struct device *dev, void *data)
+{
+	struct vfio_iommu_type1_tlb_invalidate *ustruct;
+	struct vfio_iommu_task *task = data;
+
+	ustruct = task->payload;
+	return iommu_tlb_invalidate(task->domain, dev, &ustruct->info);
+}
+
 static int vfio_iommu_dispatch_task(struct vfio_iommu *iommu, void *data,
 				    int (*fn)(struct device *, void *))
 {
@@ -1799,6 +1808,20 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 
 		return vfio_iommu_dispatch_task(iommu, (u8 *)&ustruct,
 						bind_guest_stage_fn);
+	} else if (cmd == VFIO_IOMMU_TLB_INVALIDATE) {
+		struct vfio_iommu_type1_tlb_invalidate ustruct;
+
+		minsz = offsetofend(struct vfio_iommu_type1_tlb_invalidate,
+				    info);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		return vfio_iommu_dispatch_task(iommu, (u8 *)&ustruct,
+						do_tlb_inv_fn);
 	}
 
 	return -ENOTTY;
