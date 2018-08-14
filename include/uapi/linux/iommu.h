@@ -144,4 +144,11 @@ struct iommu_cache_invalidate_info {
 	__u64		arch_id;
 	__u64		addr;
 };
+
+struct iommu_guest_msi_binding {
+	__u64		iova;
+	__u64		gpa;
+	__u32		granule;
+};
 #endif /* _UAPI_IOMMU_H */
+
