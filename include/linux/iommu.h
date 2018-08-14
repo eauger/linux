@@ -247,6 +247,9 @@ struct iommu_ops {
 	int (*tlb_invalidate)(struct iommu_domain *domain, struct device *dev,
 			      struct iommu_tlb_invalidate_info *inv_info);
 
+	int (*bind_guest_msi)(struct iommu_domain *domain,
+			      struct iommu_guest_msi_binding *binding);
+
 	unsigned long pgsize_bitmap;
 };
 
@@ -315,6 +318,8 @@ extern void iommu_unbind_guest_stage(struct iommu_domain *domain,
 extern int iommu_tlb_invalidate(struct iommu_domain *domain,
 				struct device *dev,
 				struct iommu_tlb_invalidate_info *inv_info);
+extern int iommu_bind_guest_msi(struct iommu_domain *domain,
+				struct iommu_guest_msi_binding *binding);
 
 extern struct iommu_domain *iommu_get_domain_for_dev(struct device *dev);
 extern int iommu_map(struct iommu_domain *domain, unsigned long iova,
@@ -728,6 +733,13 @@ void iommu_unbind_guest_stage(struct iommu_domain *domain, struct device *dev)
 }
 static inline int iommu_tlb_invalidate(struct iommu_domain *domain,
 		struct device *dev, struct iommu_tlb_invalidate_info *inv_info)
+{
+	return -ENODEV;
+}
+
+static inline
+int iommu_bind_guest_msi(struct iommu_domain *domain,
+			 struct iommu_guest_msi_binding *binding)
 {
 	return -ENODEV;
 }
