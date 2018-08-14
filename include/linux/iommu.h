@@ -235,6 +235,9 @@ struct iommu_ops {
 	int (*cache_invalidate)(struct iommu_domain *domain, struct device *dev,
 				struct iommu_cache_invalidate_info *inv_info);
 
+	int (*bind_guest_msi)(struct iommu_domain *domain, struct device *dev,
+			      struct iommu_guest_msi_binding *binding);
+
 	unsigned long pgsize_bitmap;
 };
 
@@ -301,6 +304,9 @@ extern int iommu_set_pasid_table(struct iommu_domain *domain,
 extern int iommu_cache_invalidate(struct iommu_domain *domain,
 				struct device *dev,
 				struct iommu_cache_invalidate_info *inv_info);
+extern int iommu_bind_guest_msi(struct iommu_domain *domain, struct device *dev,
+				struct iommu_guest_msi_binding *binding);
+
 extern struct iommu_domain *iommu_get_domain_for_dev(struct device *dev);
 extern struct iommu_domain *iommu_get_dma_domain(struct device *dev);
 extern int iommu_map(struct iommu_domain *domain, unsigned long iova,
@@ -720,6 +726,13 @@ static inline int
 iommu_cache_invalidate(struct iommu_domain *domain,
 		       struct device *dev,
 		       struct iommu_cache_invalidate_info *inv_info)
+{
+	return -ENODEV;
+}
+
+static inline
+int iommu_bind_guest_msi(struct iommu_domain *domain, struct device *dev,
+			 struct iommu_guest_msi_binding *binding)
 {
 	return -ENODEV;
 }
