@@ -1336,6 +1336,16 @@ int iommu_bind_guest_stage(struct iommu_domain *domain,
 }
 EXPORT_SYMBOL_GPL(iommu_bind_guest_stage);
 
+int iommu_bind_guest_msi(struct iommu_domain *domain,
+			 struct iommu_guest_msi_binding *binding)
+{
+	if (unlikely(!domain->ops->bind_guest_msi))
+		return -ENODEV;
+
+	return domain->ops->bind_guest_msi(domain, binding);
+}
+EXPORT_SYMBOL_GPL(iommu_bind_guest_msi);
+
 void iommu_unbind_guest_stage(struct iommu_domain *domain)
 {
 	if (unlikely(!domain->ops->unbind_guest_stage))
