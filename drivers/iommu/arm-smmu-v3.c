@@ -2025,6 +2025,21 @@ static void arm_smmu_put_resv_regions(struct device *dev,
 		kfree(entry);
 }
 
+static int arm_smmu_bind_guest_msi(struct iommu_domain *domain,
+				   struct iommu_guest_msi_binding *binding)
+{
+	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
+	struct arm_smmu_device *smmu = smmu_domain->smmu;
+
+	if (!smmu)
+		return -EINVAL;
+
+	if (smmu_domain->stage != ARM_SMMU_DOMAIN_NESTED)
+		return -EINVAL;
+
+	return iommu_dma_bind_doorbell(domain, binding);
+}
+
 static int arm_smmu_bind_guest_stage(struct iommu_domain *domain,
 				     struct iommu_guest_stage_config *cfg)
 {
@@ -2143,6 +2158,7 @@ static struct iommu_ops arm_smmu_ops = {
 	.of_xlate		= arm_smmu_of_xlate,
 	.get_resv_regions	= arm_smmu_get_resv_regions,
 	.put_resv_regions	= arm_smmu_put_resv_regions,
+	.bind_guest_msi		= arm_smmu_bind_guest_msi,
 	.bind_guest_stage	= arm_smmu_bind_guest_stage,
 	.unbind_guest_stage	= arm_smmu_unbind_guest_stage,
 	.tlb_invalidate		= arm_smmu_tlb_invalidate,
