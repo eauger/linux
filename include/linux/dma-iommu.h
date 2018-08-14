@@ -24,6 +24,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/iommu.h>
 #include <linux/msi.h>
+#include <uapi/linux/iommu.h>
 
 int iommu_dma_init(void);
 
@@ -73,6 +74,10 @@ void iommu_dma_unmap_resource(struct device *dev, dma_addr_t handle,
 /* The DMA API isn't _quite_ the whole story, though... */
 void iommu_dma_map_msi_msg(int irq, struct msi_msg *msg);
 void iommu_dma_get_resv_regions(struct device *dev, struct list_head *list);
+int iommu_dma_bind_guest_msi(struct iommu_domain *domain, struct device *dev,
+			     dma_addr_t iova, phys_addr_t gpa, size_t size);
+void iommu_dma_unbind_guest_msi(struct iommu_domain *domain,
+				struct device *dev, dma_addr_t giova);
 
 #else
 
@@ -100,6 +105,19 @@ static inline void iommu_put_dma_cookie(struct iommu_domain *domain)
 }
 
 static inline void iommu_dma_map_msi_msg(int irq, struct msi_msg *msg)
+{
+}
+
+static inline int
+iommu_dma_bind_guest_msi(struct iommu_domain *domain, struct device *dev,
+			 dma_addr_t iova, phys_addr_t gpa, size_t size)
+{
+	return -ENODEV;
+}
+
+static inline void
+iommu_dma_unbind_guest_msi(struct iommu_domain *domain,
+			   struct device *dev, dma_addr_t giova);
 {
 }
 
