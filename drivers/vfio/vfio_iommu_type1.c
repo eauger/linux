@@ -1696,6 +1696,24 @@ static int do_tlb_inv_fn(struct device *dev, void *data)
 	return iommu_tlb_invalidate(task->domain, dev, &ustruct->info);
 }
 
+static int
+vfio_iommu_bind_guest_msi(struct vfio_iommu *iommu,
+			  struct vfio_iommu_type1_guest_msi_binding *ustruct)
+{
+	struct vfio_domain *d;
+	int ret;
+
+	mutex_lock(&iommu->lock);
+	list_for_each_entry(d, &iommu->domain_list, next) {
+		ret = iommu_bind_guest_msi(d->domain, &ustruct->binding);
+		if (ret)
+			break;
+	}
+	mutex_unlock(&iommu->lock);
+	return ret;
+}
+
+
 static int vfio_iommu_dispatch_task(struct vfio_iommu *iommu, void *data,
 				    int (*fn)(struct device *, void *))
 {
@@ -1822,6 +1840,19 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 
 		return vfio_iommu_dispatch_task(iommu, (u8 *)&ustruct,
 						do_tlb_inv_fn);
+	} else if (cmd == VFIO_IOMMU_BIND_MSI) {
+		struct vfio_iommu_type1_guest_msi_binding ustruct;
+
+		minsz = offsetofend(struct vfio_iommu_type1_guest_msi_binding,
+				    binding);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		return vfio_iommu_bind_guest_msi(iommu, &ustruct);
 	}
 
 	return -ENOTTY;
