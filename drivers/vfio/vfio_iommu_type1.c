@@ -1673,6 +1673,15 @@ static int vfio_cache_inv_fn(struct device *dev, void *data)
 	return iommu_cache_invalidate(d, dev, &ustruct->info);
 }
 
+static int vfio_bind_guest_msi_fn(struct device *dev, void *data)
+{
+	struct vfio_iommu_type1_bind_guest_msi *ustruct =
+		(struct vfio_iommu_type1_bind_guest_msi *)data;
+	struct iommu_domain *d = iommu_get_domain_for_dev(dev);
+
+	return iommu_bind_guest_msi(d, dev, &ustruct->binding);
+}
+
 static int
 vfio_set_pasid_table(struct vfio_iommu *iommu,
 		      struct vfio_iommu_type1_set_pasid_table *ustruct)
@@ -1790,6 +1799,24 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		mutex_lock(&iommu->lock);
 		ret = vfio_iommu_for_each_dev(iommu, &ustruct,
 					      vfio_cache_inv_fn);
+		mutex_unlock(&iommu->lock);
+		return ret;
+	} else if (cmd == VFIO_IOMMU_BIND_MSI) {
+		struct vfio_iommu_type1_bind_guest_msi ustruct;
+		int ret;
+
+		minsz = offsetofend(struct vfio_iommu_type1_bind_guest_msi,
+				    binding);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		mutex_lock(&iommu->lock);
+		ret = vfio_iommu_for_each_dev(iommu, &ustruct,
+					      vfio_bind_guest_msi_fn);
 		mutex_unlock(&iommu->lock);
 		return ret;
 	}
