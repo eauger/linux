@@ -2226,6 +2226,73 @@ static void arm_smmu_put_resv_regions(struct device *dev,
 		kfree(entry);
 }
 
+static int arm_smmu_set_pasid_table(struct iommu_domain *domain,
+				     struct iommu_pasid_table_config *cfg)
+{
+	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
+	struct arm_smmu_master_data *entry;
+	struct arm_smmu_s1_cfg *s1_cfg;
+	struct arm_smmu_device *smmu;
+	unsigned long flags;
+	int ret = -EINVAL;
+
+	if (cfg->format != IOMMU_PASID_FORMAT_SMMUV3)
+		return -EINVAL;
+
+	mutex_lock(&smmu_domain->init_mutex);
+
+	smmu = smmu_domain->smmu;
+
+	if (!smmu)
+		goto out;
+
+	if (!((smmu->features & ARM_SMMU_FEAT_TRANS_S1) &&
+	      (smmu->features & ARM_SMMU_FEAT_TRANS_S2))) {
+		dev_info(smmu_domain->smmu->dev,
+			 "does not implement two stages\n");
+		goto out;
+	}
+
+	if (smmu_domain->stage != ARM_SMMU_DOMAIN_NESTED)
+		goto out;
+
+	if (cfg->bypass) {
+		spin_lock_irqsave(&smmu_domain->devices_lock, flags);
+		list_for_each_entry(entry, &smmu_domain->devices, list) {
+			entry->ste.s1_cfg = NULL;
+			entry->ste.nested = false;
+			arm_smmu_install_ste_for_dev(entry->dev->iommu_fwspec);
+		}
+		spin_unlock_irqrestore(&smmu_domain->devices_lock, flags);
+
+		s1_cfg->nested_abort = false;
+		s1_cfg->nested_bypass = false;
+		ret = 0;
+		goto out;
+	}
+
+	/* we currently support a single CD. S1DSS and S1FMT are ignored */
+	if (cfg->pasid_bits)
+		goto out;
+
+	s1_cfg = &smmu_domain->s1_cfg;
+	s1_cfg->nested_bypass = cfg->bypass;
+	s1_cfg->nested_abort = cfg->smmuv3.abort;
+	s1_cfg->cdptr_dma = cfg->base_ptr;
+
+	spin_lock_irqsave(&smmu_domain->devices_lock, flags);
+	list_for_each_entry(entry, &smmu_domain->devices, list) {
+		entry->ste.s1_cfg = &smmu_domain->s1_cfg;
+		entry->ste.nested = true;
+		arm_smmu_install_ste_for_dev(entry->dev->iommu_fwspec);
+	}
+	spin_unlock_irqrestore(&smmu_domain->devices_lock, flags);
+	ret = 0;
+out:
+	mutex_unlock(&smmu_domain->init_mutex);
+	return ret;
+}
+
 static struct iommu_ops arm_smmu_ops = {
 	.capable		= arm_smmu_capable,
 	.domain_alloc		= arm_smmu_domain_alloc,
@@ -2244,6 +2311,7 @@ static struct iommu_ops arm_smmu_ops = {
 	.of_xlate		= arm_smmu_of_xlate,
 	.get_resv_regions	= arm_smmu_get_resv_regions,
 	.put_resv_regions	= arm_smmu_put_resv_regions,
+	.set_pasid_table	= arm_smmu_set_pasid_table,
 	.pgsize_bitmap		= -1UL, /* Restricted during device attach */
 };
 
