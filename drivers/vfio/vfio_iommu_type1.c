@@ -1710,6 +1710,25 @@ static int vfio_cache_inv_fn(struct device *dev, void *data)
 	return iommu_cache_invalidate(d, dev, &ustruct->info);
 }
 
+static int vfio_bind_msi_fn(struct device *dev, void *data)
+{
+	struct vfio_iommu_type1_bind_msi *ustruct =
+		(struct vfio_iommu_type1_bind_msi *)data;
+	struct iommu_domain *d = iommu_get_domain_for_dev(dev);
+
+	return iommu_bind_guest_msi(d, dev, ustruct->iova,
+				    ustruct->gpa, ustruct->size);
+}
+
+static int vfio_unbind_msi_fn(struct device *dev, void *data)
+{
+	dma_addr_t *iova = (dma_addr_t *)data;
+	struct iommu_domain *d = iommu_get_domain_for_dev(dev);
+
+	iommu_unbind_guest_msi(d, dev, *iova);
+	return 0;
+}
+
 static long vfio_iommu_type1_ioctl(void *iommu_data,
 				   unsigned int cmd, unsigned long arg)
 {
@@ -1812,6 +1831,45 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		mutex_lock(&iommu->lock);
 		ret = vfio_iommu_for_each_dev(iommu, &ustruct,
 					      vfio_cache_inv_fn);
+		mutex_unlock(&iommu->lock);
+		return ret;
+	} else if (cmd == VFIO_IOMMU_BIND_MSI) {
+		struct vfio_iommu_type1_bind_msi ustruct;
+		int ret;
+
+		minsz = offsetofend(struct vfio_iommu_type1_bind_msi,
+				    size);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		mutex_lock(&iommu->lock);
+		ret = vfio_iommu_for_each_dev(iommu, &ustruct,
+					      vfio_bind_msi_fn);
+		if (ret)
+			vfio_iommu_for_each_dev(iommu, &ustruct.iova,
+						vfio_unbind_msi_fn);
+		mutex_unlock(&iommu->lock);
+		return ret;
+	} else if (cmd == VFIO_IOMMU_UNBIND_MSI) {
+		struct vfio_iommu_type1_unbind_msi ustruct;
+		int ret;
+
+		minsz = offsetofend(struct vfio_iommu_type1_unbind_msi,
+				    iova);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		mutex_lock(&iommu->lock);
+		ret = vfio_iommu_for_each_dev(iommu, &ustruct.iova,
+					      vfio_unbind_msi_fn);
 		mutex_unlock(&iommu->lock);
 		return ret;
 	}
