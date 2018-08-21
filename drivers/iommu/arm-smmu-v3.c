@@ -2319,6 +2319,62 @@ static void arm_smmu_detach_pasid_table(struct iommu_domain *domain)
 	mutex_unlock(&smmu_domain->init_mutex);
 }
 
+static int
+arm_smmu_cache_invalidate(struct iommu_domain *domain, struct device *dev,
+			  struct iommu_cache_invalidate_info *inv_info)
+{
+	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
+	struct arm_smmu_device *smmu = smmu_domain->smmu;
+
+	if (smmu_domain->stage != ARM_SMMU_DOMAIN_NESTED)
+		return -EINVAL;
+
+	if (!smmu)
+		return -EINVAL;
+
+	if (inv_info->cache & IOMMU_CACHE_INV_TYPE_IOTLB) {
+		if (inv_info->granularity == IOMMU_INV_GRANU_PASID) {
+			struct arm_smmu_cmdq_ent cmd = {
+				.opcode = CMDQ_OP_TLBI_NH_ASID,
+				.tlbi = {
+					.vmid = smmu_domain->s2_cfg.vmid,
+					.asid = inv_info->pasid,
+				},
+			};
+
+			arm_smmu_cmdq_issue_cmd(smmu, &cmd);
+			arm_smmu_cmdq_issue_sync(smmu);
+
+		} else if (inv_info->granularity == IOMMU_INV_GRANU_ADDR) {
+			struct iommu_inv_addr_info *info = &inv_info->addr_info;
+			size_t size = info->nb_granules * info->granule_size;
+			bool leaf = info->flags & IOMMU_INV_ADDR_FLAGS_LEAF;
+			struct arm_smmu_cmdq_ent cmd = {
+				.opcode = CMDQ_OP_TLBI_NH_VA,
+				.tlbi = {
+					.addr = info->addr,
+					.vmid = smmu_domain->s2_cfg.vmid,
+					.asid = info->pasid,
+					.leaf = leaf,
+				},
+			};
+
+			do {
+				arm_smmu_cmdq_issue_cmd(smmu, &cmd);
+				cmd.tlbi.addr += info->granule_size;
+			} while (size -= info->granule_size);
+			arm_smmu_cmdq_issue_sync(smmu);
+		} else {
+			return -EINVAL;
+		}
+	}
+	if (inv_info->cache & IOMMU_CACHE_INV_TYPE_PASID ||
+	    inv_info->cache & IOMMU_CACHE_INV_TYPE_DEV_IOTLB) {
+		return -ENOENT;
+	}
+	return 0;
+}
+
 static struct iommu_ops arm_smmu_ops = {
 	.capable		= arm_smmu_capable,
 	.domain_alloc		= arm_smmu_domain_alloc,
@@ -2339,6 +2395,7 @@ static struct iommu_ops arm_smmu_ops = {
 	.put_resv_regions	= arm_smmu_put_resv_regions,
 	.attach_pasid_table	= arm_smmu_attach_pasid_table,
 	.detach_pasid_table	= arm_smmu_detach_pasid_table,
+	.cache_invalidate	= arm_smmu_cache_invalidate,
 	.pgsize_bitmap		= -1UL, /* Restricted during device attach */
 };
 
