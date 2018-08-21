@@ -2251,6 +2251,45 @@ static void arm_smmu_unbind_pasid_table(struct iommu_domain *domain)
 	mutex_unlock(&smmu_domain->init_mutex);
 }
 
+static int
+arm_smmu_cache_invalidate(struct iommu_domain *domain, struct device *dev,
+			  struct iommu_cache_invalidate_info *inv_info)
+{
+	struct arm_smmu_domain *smmu_domain = to_smmu_domain(domain);
+	struct arm_smmu_device *smmu = smmu_domain->smmu;
+
+	if (smmu_domain->stage != ARM_SMMU_DOMAIN_NESTED)
+		return -EINVAL;
+
+	if (!smmu)
+		return -EINVAL;
+
+	switch (inv_info->hdr.type) {
+	case IOMMU_INV_TYPE_TLB:
+		/*
+		 * TODO: On context invalidation, the userspace sets nr_pages
+		 * to 0. Refine the API to add a dedicated flags and also
+		 * properly handle the leaf parameter.
+		 */
+		if (!inv_info->nr_pages) {
+			smmu_domain->s1_cfg.cd.asid = inv_info->arch_id;
+			arm_smmu_tlb_inv_context(smmu_domain);
+		} else {
+			size_t granule = 1 << (inv_info->size + 12);
+			size_t size = inv_info->nr_pages * granule;
+
+			smmu_domain->s1_cfg.cd.asid = inv_info->arch_id;
+			arm_smmu_tlb_inv_range_nosync(inv_info->addr, size,
+						      granule, false,
+						      smmu_domain);
+			__arm_smmu_tlb_sync(smmu);
+		}
+		return 0;
+	default:
+		return -EINVAL;
+	}
+}
+
 static struct iommu_ops arm_smmu_ops = {
 	.capable		= arm_smmu_capable,
 	.domain_alloc		= arm_smmu_domain_alloc,
@@ -2271,6 +2310,7 @@ static struct iommu_ops arm_smmu_ops = {
 	.put_resv_regions	= arm_smmu_put_resv_regions,
 	.bind_pasid_table	= arm_smmu_bind_pasid_table,
 	.unbind_pasid_table	= arm_smmu_unbind_pasid_table,
+	.cache_invalidate	= arm_smmu_cache_invalidate,
 	.pgsize_bitmap		= -1UL, /* Restricted during device attach */
 };
 
