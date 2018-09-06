@@ -1769,7 +1769,7 @@ vfio_iommu_fault_handler(struct iommu_fault_event *event, void *data)
 		eventfd_signal(iommu->fault_ctx, 1);
 out:
 	mutex_unlock(&iommu->fault_lock);
-	return 0;
+	return ret;
 }
 
 static inline int
@@ -1981,6 +1981,37 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 			return -EINVAL;
 
 		return vfio_iommu_set_fault_eventfd(iommu, &ustruct);
+	} else if (cmd == VFIO_IOMMU_GET_FAULT_EVENTS) {
+		struct vfio_iommu_type1_get_fault_events ustruct;
+		size_t buf_size, len, elem_size;
+		int copied, max_events, ret;
+
+		minsz = offsetofend(struct vfio_iommu_type1_get_fault_events,
+				    reserved);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		elem_size = sizeof(struct iommu_fault);
+		buf_size = ustruct.argsz - minsz;
+		max_events = buf_size / elem_size;
+		len = max_events * elem_size;
+
+		mutex_lock(&iommu->fault_lock);
+
+		ret = kfifo_to_user(&iommu->fault_fifo,
+				    (void __user *)(arg + minsz), len, &copied);
+
+		mutex_unlock(&iommu->fault_lock);
+		if (ret)
+			return ret;
+
+		ustruct.count = copied / elem_size;
+
+		return copy_to_user((void __user *)arg, &ustruct, minsz);
 	}
 
 	return -ENOTTY;
