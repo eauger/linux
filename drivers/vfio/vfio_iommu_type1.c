@@ -41,6 +41,8 @@
 #include <linux/notifier.h>
 #include <linux/dma-iommu.h>
 #include <linux/irqdomain.h>
+#include <linux/eventfd.h>
+#include <linux/kfifo.h>
 
 #define DRIVER_VERSION  "0.2"
 #define DRIVER_AUTHOR   "Alex Williamson <alex.williamson@redhat.com>"
@@ -66,6 +68,9 @@ struct vfio_iommu {
 	struct blocking_notifier_head notifier;
 	bool			v2;
 	bool			nesting;
+	struct eventfd_ctx	*fault_ctx;
+	DECLARE_KFIFO_PTR(fault_fifo, struct iommu_fault);
+	struct mutex            fault_lock;
 };
 
 struct vfio_domain {
@@ -114,6 +119,7 @@ struct vfio_regions {
 					(!list_empty(&iommu->domain_list))
 
 static int put_pfn(unsigned long pfn, int prot);
+static int vfio_iommu_teardown_fault_eventfd(struct vfio_iommu *iommu);
 
 /*
  * This code handles mapping and unmapping of user data buffers
@@ -1527,14 +1533,25 @@ static void vfio_sanity_check_pfn_list(struct vfio_iommu *iommu)
 	WARN_ON(iommu->notifier.head);
 }
 
+static inline int
+vfio_unregister_fault_handler_fn(struct device *dev, void *data)
+{
+	return iommu_unregister_device_fault_handler(dev);
+}
+
 static void vfio_iommu_type1_detach_group(void *iommu_data,
 					  struct iommu_group *iommu_group)
 {
 	struct vfio_iommu *iommu = iommu_data;
 	struct vfio_domain *domain;
 	struct vfio_group *group;
+	int ret;
 
 	mutex_lock(&iommu->lock);
+
+	ret = iommu_group_for_each_dev(iommu_group, NULL,
+				       vfio_unregister_fault_handler_fn);
+	WARN_ON(ret);
 
 	if (iommu->external_domain) {
 		group = find_iommu_group(iommu->external_domain, iommu_group);
@@ -1613,6 +1630,7 @@ static void *vfio_iommu_type1_open(unsigned long arg)
 	INIT_LIST_HEAD(&iommu->domain_list);
 	iommu->dma_list = RB_ROOT;
 	mutex_init(&iommu->lock);
+	mutex_init(&iommu->fault_lock);
 	BLOCKING_INIT_NOTIFIER_HEAD(&iommu->notifier);
 
 	return iommu;
@@ -1682,25 +1700,22 @@ static int vfio_cache_inv_fn(struct device *dev, void *data)
 	return iommu_cache_invalidate(d, dev, &ustruct->info);
 }
 
-static int
-vfio_cache_invalidate(struct vfio_iommu *iommu,
-		      struct vfio_iommu_type1_cache_invalidate *ustruct)
+/* iommu->lock must be held */
+static int vfio_iommu_for_each_dev(struct vfio_iommu *iommu, void *data,
+				   int (*fn)(struct device *, void *))
 {
 	struct vfio_domain *d;
 	struct vfio_group *g;
 	int ret = 0;
 
-	mutex_lock(&iommu->lock);
-
 	list_for_each_entry(d, &iommu->domain_list, next) {
 		list_for_each_entry(g, &d->group_list, next) {
-			ret = iommu_group_for_each_dev(g->iommu_group, ustruct,
-						       vfio_cache_inv_fn);
+			ret = iommu_group_for_each_dev(g->iommu_group,
+						       data, fn);
 			if (ret)
 				break;
 		}
 	}
-	mutex_unlock(&iommu->lock);
 	return ret;
 }
 
@@ -1737,6 +1752,102 @@ vfio_bind_pasid_table(struct vfio_iommu *iommu,
 			break;
 	}
 	mutex_unlock(&iommu->lock);
+	return ret;
+}
+
+static int
+vfio_iommu_fault_handler(struct iommu_fault_event *event, void *data)
+{
+	struct vfio_iommu *iommu = (struct vfio_iommu *)data;
+	int ret;
+
+	mutex_lock(&iommu->fault_lock);
+	if (!iommu->fault_ctx)
+		goto out;
+	ret = kfifo_put(&iommu->fault_fifo, event->fault);
+	if (ret)
+		eventfd_signal(iommu->fault_ctx, 1);
+out:
+	mutex_unlock(&iommu->fault_lock);
+	return 0;
+}
+
+static inline int
+vfio_register_fault_handler_fn(struct device *dev, void *data)
+{
+	return iommu_register_device_fault_handler(dev,
+						   vfio_iommu_fault_handler,
+						   data);
+}
+
+static int vfio_iommu_teardown_fault_eventfd(struct vfio_iommu *iommu)
+{
+	int ret = -EINVAL;
+
+	mutex_lock(&iommu->fault_lock);
+
+	if (!iommu->fault_ctx)
+		goto out;
+
+	ret = vfio_iommu_for_each_dev(iommu, NULL,
+				      vfio_unregister_fault_handler_fn);
+	WARN_ON(ret);
+
+	eventfd_ctx_put(iommu->fault_ctx);
+	iommu->fault_ctx = NULL;
+	kfifo_free(&iommu->fault_fifo);
+out:
+	mutex_unlock(&iommu->fault_lock);
+	return ret;
+}
+
+static int
+vfio_iommu_set_fault_eventfd(struct vfio_iommu *iommu,
+			     struct vfio_iommu_type1_set_fault_eventfd *ustruct)
+{
+	struct eventfd_ctx *ctx;
+	int eventfd = ustruct->eventfd;
+	int qs = ustruct->config.qs;
+	int ret;
+
+	if (eventfd == -1)
+		return vfio_iommu_teardown_fault_eventfd(iommu);
+
+	if (qs <= 0)
+		return -EINVAL;
+
+	ctx = eventfd_ctx_fdget(eventfd);
+	if (IS_ERR(ctx))
+		return PTR_ERR(ctx);
+
+	mutex_lock(&iommu->fault_lock);
+	if (iommu->fault_ctx) {
+		eventfd_ctx_put(ctx);
+		return -EEXIST;
+	}
+
+	ret = kfifo_alloc(&iommu->fault_fifo,
+			  (1 << qs) * sizeof(struct iommu_fault),
+			  GFP_KERNEL);
+	if (ret)
+		goto out;
+
+	iommu->fault_ctx = ctx;
+	ret = vfio_iommu_for_each_dev(iommu, iommu,
+				      vfio_register_fault_handler_fn);
+	if (ret)
+		goto unregister;
+
+	mutex_unlock(&iommu->fault_lock);
+	return 0;
+unregister:
+	vfio_iommu_for_each_dev(iommu, NULL,
+				vfio_unregister_fault_handler_fn);
+	iommu->fault_ctx = NULL;
+	kfifo_free(&iommu->fault_fifo);
+out:
+	eventfd_ctx_put(ctx);
+	mutex_unlock(&iommu->fault_lock);
 	return ret;
 }
 
@@ -1825,6 +1936,7 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		return vfio_bind_pasid_table(iommu, &ustruct);
 	} else if (cmd == VFIO_IOMMU_CACHE_INVALIDATE) {
 		struct vfio_iommu_type1_cache_invalidate ustruct;
+		int ret;
 
 		minsz = offsetofend(struct vfio_iommu_type1_cache_invalidate,
 				    info);
@@ -1835,7 +1947,11 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 		if (ustruct.argsz < minsz || ustruct.flags)
 			return -EINVAL;
 
-		return vfio_cache_invalidate(iommu, &ustruct);
+		mutex_lock(&iommu->lock);
+		ret = vfio_iommu_for_each_dev(iommu,
+					      &ustruct, vfio_cache_inv_fn);
+		mutex_unlock(&iommu->lock);
+		return ret;
 	} else if (cmd == VFIO_IOMMU_BIND_MSI) {
 		struct vfio_iommu_type1_bind_guest_msi ustruct;
 
@@ -1849,6 +1965,22 @@ static long vfio_iommu_type1_ioctl(void *iommu_data,
 			return -EINVAL;
 
 		return vfio_iommu_bind_guest_msi(iommu, &ustruct);
+	} else if (cmd == VFIO_IOMMU_SET_FAULT_EVENTFD) {
+		struct vfio_iommu_type1_set_fault_eventfd ustruct;
+
+		minsz = offsetofend(struct vfio_iommu_type1_set_fault_eventfd,
+				    config);
+
+		if (copy_from_user(&ustruct, (void __user *)arg, minsz))
+			return -EFAULT;
+
+		if (ustruct.argsz < minsz || ustruct.flags)
+			return -EINVAL;
+
+		if (ustruct.eventfd < 1)
+			return -EINVAL;
+
+		return vfio_iommu_set_fault_eventfd(iommu, &ustruct);
 	}
 
 	return -ENOTTY;

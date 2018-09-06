@@ -687,6 +687,22 @@ struct vfio_iommu_type1_bind_guest_msi {
 };
 #define VFIO_IOMMU_BIND_MSI      _IO(VFIO_TYPE, VFIO_BASE + 24)
 
+struct vfio_iommu_type1_guest_fault_config {
+#define VFIO_IOMMU_FAULT_UNRECOVERABLE	(1 << 0)
+	__u32	flags;
+	union {
+		__u8	qs; /* queue size, log2(entries) */
+	};
+};
+
+struct vfio_iommu_type1_set_fault_eventfd {
+	__u32   argsz;
+	__u32   flags;
+	__u32   eventfd;
+	struct vfio_iommu_type1_guest_fault_config config;
+};
+#define VFIO_IOMMU_SET_FAULT_EVENTFD      _IO(VFIO_TYPE, VFIO_BASE + 25)
+
 /* -------- Additional API for SPAPR TCE (Server POWERPC) IOMMU -------- */
 
 /*
