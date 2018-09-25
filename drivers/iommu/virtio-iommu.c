@@ -7,6 +7,7 @@
 
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
+#include <linux/acpi_iort.h>
 #include <linux/amba/bus.h>
 #include <linux/delay.h>
 #include <linux/dma-iommu.h>
@@ -1006,11 +1007,21 @@ static int viommu_fill_evtq(struct viommu_dev *viommu)
 	return 0;
 }
 
+static struct fwnode_handle *viommu_get_fwnode(struct device *dev)
+{
+	if (!dev->fwnode)
+		/* Our last hope, get the fwnode from ACPI IORT */
+		dev->fwnode = iort_get_pci_iommu_fwnode(dev);
+
+	return dev->fwnode;
+}
+
 static int viommu_probe(struct virtio_device *vdev)
 {
 	struct device *parent_dev = vdev->dev.parent;
 	struct viommu_dev *viommu = NULL;
 	struct device *dev = &vdev->dev;
+	struct fwnode_handle *fwnode;
 	u64 input_start = 0;
 	u64 input_end = -1UL;
 	int ret;
@@ -1079,8 +1090,14 @@ static int viommu_probe(struct virtio_device *vdev)
 	if (ret)
 		goto err_free_vqs;
 
+	fwnode = viommu_get_fwnode(parent_dev);
+	if (!fwnode) {
+		ret = -ENODEV;
+		goto err_sysfs_remove;
+	}
+
 	iommu_device_set_ops(&viommu->iommu, &viommu_ops);
-	iommu_device_set_fwnode(&viommu->iommu, parent_dev->fwnode);
+	iommu_device_set_fwnode(&viommu->iommu, fwnode);
 
 	iommu_device_register(&viommu->iommu);
 
@@ -1113,8 +1130,9 @@ static int viommu_probe(struct virtio_device *vdev)
 
 	return 0;
 
-err_unregister:
+err_sysfs_remove:
 	iommu_device_sysfs_remove(&viommu->iommu);
+err_unregister:
 	iommu_device_unregister(&viommu->iommu);
 err_free_vqs:
 	vdev->config->del_vqs(vdev);
