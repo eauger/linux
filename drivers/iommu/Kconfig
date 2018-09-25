@@ -420,6 +420,7 @@ config VIRTIO_IOMMU
 	select IOMMU_API
 	select INTERVAL_TREE
 	select ARM_DMA_USE_IOMMU if ARM
+	select ACPI_IORT if ACPI
 	help
 	  Para-virtualised IOMMU driver with virtio.
 
