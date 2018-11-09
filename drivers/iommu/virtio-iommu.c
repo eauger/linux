@@ -402,7 +402,7 @@ static size_t viommu_del_mappings(struct viommu_domain *vdomain,
  */
 static int viommu_replay_mappings(struct viommu_domain *vdomain)
 {
-	int ret;
+	int ret = 0;
 	unsigned long flags;
 	struct viommu_mapping *mapping;
 	struct interval_tree_node *node;
@@ -1092,6 +1092,7 @@ static int viommu_probe(struct virtio_device *vdev)
 
 	fwnode = viommu_get_fwnode(parent_dev);
 	if (!fwnode) {
+		dev_info(dev, "%s viommu_get_fwnode failed\n", __func__);
 		ret = -ENODEV;
 		goto err_sysfs_remove;
 	}
@@ -1130,10 +1131,10 @@ static int viommu_probe(struct virtio_device *vdev)
 
 	return 0;
 
-err_sysfs_remove:
-	iommu_device_sysfs_remove(&viommu->iommu);
 err_unregister:
 	iommu_device_unregister(&viommu->iommu);
+err_sysfs_remove:
+	iommu_device_sysfs_remove(&viommu->iommu);
 err_free_vqs:
 	vdev->config->del_vqs(vdev);
 
