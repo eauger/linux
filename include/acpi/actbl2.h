@@ -250,8 +250,17 @@ struct acpi_iort_pviommu {
 	u64 resv;
 };
 
+struct acpi_iort_pviommu_pci {
+	u32 devid;
+	u8 resv[12];
+	u32 model;
+	u32 flags;
+	u8 resv2[16];
+};
+
 enum acpi_iort_paravirt_node_model {
 	ACPI_IORT_NODE_PV_VIRTIO_IOMMU = 0x00,
+	ACPI_IORT_NODE_PV_VIRTIO_IOMMU_PCI = 0x01,
 };
 
 #define ACPI_IORT_NODE_PV_CACHE_COHERENT    (1<<0)

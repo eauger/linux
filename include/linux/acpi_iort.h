@@ -40,6 +40,7 @@ int iort_pmsi_get_dev_id(struct device *dev, u32 *dev_id);
 void iort_dma_setup(struct device *dev, u64 *dma_addr, u64 *size);
 const struct iommu_ops *iort_iommu_configure(struct device *dev);
 int iort_iommu_msi_get_resv_regions(struct device *dev, struct list_head *head);
+struct fwnode_handle *iort_get_pci_iommu_fwnode(struct device *dev);
 #else
 static inline void acpi_iort_init(void) { }
 static inline u32 iort_msi_map_rid(struct device *dev, u32 req_id)
@@ -57,6 +58,10 @@ static inline const struct iommu_ops *iort_iommu_configure(
 static inline
 int iort_iommu_msi_get_resv_regions(struct device *dev, struct list_head *head)
 { return 0; }
+static struct fwnode_handle *iort_get_pci_iommu_fwnode(struct device *dev)
+{
+	return NULL;
+}
 #endif
 
 #endif /* __ACPI_IORT_H__ */
