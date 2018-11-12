@@ -44,10 +44,17 @@ struct iort_its_msi_chip {
 	u32			translation_id;
 };
 
+struct iort_pci_devid {
+	u16 segment;
+	u8 bus;
+	u8 devfn;
+};
+
 struct iort_fwnode {
 	struct list_head list;
 	struct acpi_iort_node *iort_node;
 	struct fwnode_handle *fwnode;
+	struct iort_pci_devid *pci_devid;
 };
 static LIST_HEAD(iort_fwnode_list);
 static DEFINE_SPINLOCK(iort_fwnode_lock);
@@ -58,12 +65,14 @@ static DEFINE_SPINLOCK(iort_fwnode_lock);
  *
  * @node: IORT table node associated with the IOMMU
  * @fwnode: fwnode associated with the IORT node
+ * @pci_devid: pci device ID associated with the IORT node, may be NULL
  *
  * Returns: 0 on success
  *          <0 on failure
  */
 static inline int iort_set_fwnode(struct acpi_iort_node *iort_node,
-				  struct fwnode_handle *fwnode)
+				  struct fwnode_handle *fwnode,
+				  struct iort_pci_devid *pci_devid)
 {
 	struct iort_fwnode *np;
 
@@ -75,6 +84,7 @@ static inline int iort_set_fwnode(struct acpi_iort_node *iort_node,
 	INIT_LIST_HEAD(&np->list);
 	np->iort_node = iort_node;
 	np->fwnode = fwnode;
+	np->pci_devid = pci_devid;
 
 	spin_lock(&iort_fwnode_lock);
 	list_add_tail(&np->list, &iort_fwnode_list);
@@ -120,6 +130,8 @@ static inline void iort_delete_fwnode(struct acpi_iort_node *node)
 	spin_lock(&iort_fwnode_lock);
 	list_for_each_entry_safe(curr, tmp, &iort_fwnode_list, list) {
 		if (curr->iort_node == node) {
+			if (curr->pci_devid)
+				kfree(curr->pci_devid);
 			list_del(&curr->list);
 			kfree(curr);
 			break;
@@ -1432,6 +1444,8 @@ static const char *paravirt_get_name(struct acpi_iort_node *node)
 	switch (pviommu->model) {
 	case ACPI_IORT_NODE_PV_VIRTIO_IOMMU:
 		return "virtio-mmio";
+	case ACPI_IORT_NODE_PV_VIRTIO_IOMMU_PCI:
+		return "virtio-pci-iommu";
 	default:
 		return NULL;
 	}
@@ -1462,6 +1476,30 @@ static void __init paravirt_init_resources(struct resource *res,
 	acpi_iort_register_irq(hw_irq, "pviommu", trigger, res + 1);
 }
 
+static __init struct iort_pci_devid *
+paravirt_get_pci_devid(struct acpi_iort_node *node)
+{
+	unsigned int val;
+	struct iort_pci_devid *devid;
+	struct acpi_iort_pviommu_pci *pv_node;
+
+	pv_node = (struct acpi_iort_pviommu_pci *)node->node_data;
+	if (pv_node->model != ACPI_IORT_NODE_PV_VIRTIO_IOMMU_PCI)
+		return NULL;
+
+	val = le32_to_cpu(pv_node->devid);
+
+	devid = kzalloc(sizeof(*devid), GFP_KERNEL);
+	if (!devid)
+		return NULL;
+
+	devid->segment = val >> 16;
+	devid->bus = PCI_BUS_NUM(val);
+	devid->devfn = val & 0xff;
+
+	return devid;
+}
+
 struct iort_dev_config {
 	const char *(*dev_get_name)(struct acpi_iort_node *node);
 	int (*dev_init)(struct acpi_iort_node *node);
@@ -1473,6 +1511,7 @@ struct iort_dev_config {
 	int (*dev_set_proximity)(struct device *dev,
 				    struct acpi_iort_node *node);
 	int (*dev_add_platdata)(struct platform_device *pdev);
+	struct iort_pci_devid *(*dev_get_pci_devid)(struct acpi_iort_node *node);
 };
 
 static const struct iort_dev_config iort_arm_smmu_v3_cfg __initconst = {
@@ -1499,7 +1538,8 @@ static const struct iort_dev_config iort_arm_smmu_v3_pmcg_cfg __initconst = {
 static const struct iort_dev_config iort_paravirt_cfg __initconst = {
 	.dev_get_name = paravirt_get_name,
 	.dev_count_resources = paravirt_count_resources,
-	.dev_init_resources = paravirt_init_resources
+	.dev_init_resources = paravirt_init_resources,
+	.dev_get_pci_devid = paravirt_get_pci_devid,
 };
 
 static __init const struct iort_dev_config *iort_get_dev_cfg(
@@ -1609,6 +1649,42 @@ dev_put:
 }
 
 #ifdef CONFIG_PCI
+/**
+ * iort_get_pci_iommu_fwnode - get fwnode of a PCI-based IOMMU device
+ * @dev: the IOMMU device
+ *
+ * Obtain the fwnode handle associated with this IOMMU device, when it is using
+ * the PCI transport.
+ */
+struct fwnode_handle *iort_get_pci_iommu_fwnode(struct device *dev)
+{
+	struct pci_dev *pdev;
+	struct iort_fwnode *curr;
+	struct iort_pci_devid *devid;
+	struct fwnode_handle *fwnode = NULL;
+
+	if (!dev_is_pci(dev))
+		return NULL;
+
+	pdev = to_pci_dev(dev);
+
+	spin_lock(&iort_fwnode_lock);
+	list_for_each_entry(curr, &iort_fwnode_list, list) {
+		devid = curr->pci_devid;
+		if (devid &&
+		    pci_domain_nr(pdev->bus) == devid->segment &&
+		    pdev->bus->number == devid->bus &&
+		    pdev->devfn == devid->devfn) {
+			fwnode = curr->fwnode;
+			break;
+		}
+	}
+	spin_unlock(&iort_fwnode_lock);
+
+	return fwnode;
+}
+EXPORT_SYMBOL_GPL(iort_get_pci_iommu_fwnode);
+
 static void __init iort_enable_acs(struct acpi_iort_node *iort_node)
 {
 	static bool acs_enabled __initdata;
@@ -1647,13 +1723,44 @@ static void __init iort_enable_acs(struct acpi_iort_node *iort_node)
 static inline void iort_enable_acs(struct acpi_iort_node *iort_node) { }
 #endif
 
+static int __init iort_init_node(struct acpi_iort_node *iort_node)
+{
+	int ret;
+	struct fwnode_handle *fwnode;
+	const struct iort_dev_config *ops;
+	struct iort_pci_devid *pci_devid = NULL;
+
+	ops = iort_get_dev_cfg(iort_node);
+	if (!ops)
+		return 0;
+
+	fwnode = acpi_alloc_fwnode_static();
+	if (!fwnode)
+		return -ENOMEM;
+
+	if (ops->dev_get_pci_devid)
+		pci_devid = ops->dev_get_pci_devid(iort_node);
+
+	iort_set_fwnode(iort_node, fwnode, pci_devid);
+
+	if (pci_devid)
+		return 0;
+
+	ret = iort_add_platform_device(iort_node, ops);
+	if (ret) {
+		iort_delete_fwnode(iort_node);
+		acpi_free_fwnode_static(fwnode);
+		return ret;
+	}
+
+	return 0;
+}
+
 static void __init iort_init_platform_devices(void)
 {
 	struct acpi_iort_node *iort_node, *iort_end;
 	struct acpi_table_iort *iort;
-	struct fwnode_handle *fwnode;
-	int i, ret;
-	const struct iort_dev_config *ops;
+	int i;
 
 	/*
 	 * iort_table and iort both point to the start of IORT table, but
@@ -1675,21 +1782,8 @@ static void __init iort_init_platform_devices(void)
 
 		iort_enable_acs(iort_node);
 
-		ops = iort_get_dev_cfg(iort_node);
-		if (ops) {
-			fwnode = acpi_alloc_fwnode_static();
-			if (!fwnode)
-				return;
-
-			iort_set_fwnode(iort_node, fwnode);
-
-			ret = iort_add_platform_device(iort_node, ops);
-			if (ret) {
-				iort_delete_fwnode(iort_node);
-				acpi_free_fwnode_static(fwnode);
-				return;
-			}
-		}
+		if (iort_init_node(iort_node))
+			return;
 
 		iort_node = ACPI_ADD_PTR(struct acpi_iort_node, iort_node,
 					 iort_node->length);
