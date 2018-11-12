@@ -625,6 +625,18 @@ static int viommu_domain_finalise(struct viommu_dev *viommu,
 	return ret > 0 ? 0 : ret;
 }
 
+__maybe_unused
+static int viommu_dma_init_domain(struct iommu_domain *domain,
+				  struct device *dev)
+{
+	u64 base = domain->geometry.aperture_start;
+	/* Doesn't support 64-bits IOVA, so restrict it to 63 */
+	size_t size = min_t(size_t, -1UL - 1,
+			    domain->geometry.aperture_end - base) + 1;
+
+	return iommu_dma_init_domain(domain, base, size, dev);
+}
+
 static void viommu_domain_free(struct iommu_domain *domain)
 {
 	struct viommu_domain *vdomain = to_viommu_domain(domain);
@@ -660,6 +672,11 @@ static int viommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 		dev_err(dev, "cannot attach to foreign vIOMMU\n");
 		ret = -EXDEV;
 	}
+
+#ifdef CONFIG_X86
+	if (!ret)
+		ret = viommu_dma_init_domain(domain, dev);
+#endif
 	mutex_unlock(&vdomain->mutex);
 
 	if (ret)
@@ -995,6 +1012,99 @@ static int viommu_fill_evtq(struct viommu_dev *viommu)
 	return 0;
 }
 
+#ifdef CONFIG_X86
+static dma_addr_t viommu_dma_map_page(struct device *dev, struct page *page,
+				      unsigned long offset, size_t size,
+				      enum dma_data_direction dir,
+				      unsigned long attrs)
+{
+	return iommu_dma_map_page(dev, page, offset, size,
+				  dma_info_to_prot(dir, 0, attrs));
+}
+
+static int viommu_dma_map_sg(struct device *dev, struct scatterlist *sglist, int nelems,
+			     enum dma_data_direction dir, unsigned long attrs)
+{
+	return iommu_dma_map_sg(dev, sglist, nelems,
+				dma_info_to_prot(dir, 0, attrs));
+}
+
+static void __flush_page(struct device *dev, const void *virt, phys_addr_t phys)
+{
+}
+
+/* Referring to __iommu_alloc_attrs, simplified version */
+static void *viommu_dma_map_alloc_coherent(struct device *dev, size_t size,
+					   dma_addr_t *handle, gfp_t gfp,
+					   unsigned long attrs)
+{
+	bool coherent = true;
+	int ioprot = dma_info_to_prot(DMA_BIDIRECTIONAL, coherent, attrs);
+	pgprot_t prot = PAGE_KERNEL;
+	size_t iosize = size;
+	struct page **pages;
+	void *addr;
+
+	if (WARN(!dev, "cannot create IOMMU mapping for unknown device\n"))
+		return NULL;
+
+	size = PAGE_ALIGN(size);
+
+	if (WARN(attrs & DMA_ATTR_FORCE_CONTIGUOUS, "CONTIGUOUS unsupported") ||
+	    WARN(!gfpflags_allow_blocking(gfp), "atomic alloc unsupported"))
+		return NULL;
+
+	/*
+	 * Some drivers rely on this, and we probably don't want the
+	 * possibility of stale kernel data being read by devices anyway.
+	 */
+	gfp |= __GFP_ZERO;
+
+	pages = iommu_dma_alloc(dev, iosize, gfp, attrs, ioprot,
+				handle, __flush_page);
+	if (!pages)
+		return NULL;
+
+	addr = dma_common_pages_remap(pages, size, VM_USERMAP, prot,
+				      __builtin_return_address(0));
+	if (!addr)
+		iommu_dma_free(dev, pages, iosize, handle);
+
+	return addr;
+}
+
+/* From __iommu_free_attrs */
+static void viommu_dma_map_free(struct device *dev, size_t size, void *cpu_addr,
+				dma_addr_t handle, unsigned long attrs)
+{
+	size_t iosize = size;
+	struct vm_struct *area;
+
+	size = PAGE_ALIGN(size);
+	if (WARN_ON(!is_vmalloc_addr(cpu_addr)))
+	    return;
+
+	area = find_vm_area(cpu_addr);
+	if (WARN_ON(!area || !area->pages))
+		return;
+
+	iommu_dma_free(dev, area->pages, iosize, &handle);
+	dma_common_free_remap(cpu_addr, size, VM_USERMAP);
+}
+
+static struct dma_map_ops viommu_dma_ops = {
+	.alloc			= viommu_dma_map_alloc_coherent,
+	.free			= viommu_dma_map_free,
+	.map_sg			= viommu_dma_map_sg,
+	.unmap_sg		= iommu_dma_unmap_sg,
+	.map_page		= viommu_dma_map_page,
+	.unmap_page		= iommu_dma_unmap_page,
+	.map_resource		= iommu_dma_map_resource,
+	.unmap_resource		= iommu_dma_unmap_resource,
+	.mapping_error		= iommu_dma_mapping_error,
+};
+#endif
+
 static struct fwnode_handle *viommu_get_fwnode(struct device *dev)
 {
 	if (!dev->fwnode)
@@ -1089,6 +1199,19 @@ static int viommu_probe(struct virtio_device *vdev)
 	iommu_device_set_fwnode(&viommu->iommu, fwnode);
 
 	iommu_device_register(&viommu->iommu);
+
+	/* Hack: this should be an arch initcall */
+#ifdef CONFIG_X86
+	{
+		static bool __inited = false;
+
+		if (!__inited) {
+			dma_ops = &viommu_dma_ops;
+			iommu_dma_init();
+			__inited = true;
+		}
+	}
+#endif
 
 #ifdef CONFIG_PCI
 	if (pci_bus_type.iommu_ops != &viommu_ops) {
