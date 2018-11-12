@@ -75,6 +75,7 @@ struct viommu_endpoint {
 	struct viommu_dev		*viommu;
 	struct viommu_domain		*vdomain;
 	struct list_head		resv_regions;
+	struct device_link		*link;
 };
 
 struct viommu_request {
@@ -894,16 +895,22 @@ static int viommu_add_device(struct device *dev)
 	INIT_LIST_HEAD(&vdev->resv_regions);
 	fwspec->iommu_priv = vdev;
 
+	vdev->link = device_link_add(dev, viommu->dev, 0);
+	if (!vdev->link) {
+		ret = -ENODEV;
+		goto err_free_dev;
+	}
+
 	if (viommu->probe_size) {
 		/* Get additional information for this endpoint */
 		ret = viommu_probe_endpoint(viommu, dev);
 		if (ret)
-			goto err_free_dev;
+			goto err_remove_dev_link;
 	}
 
 	ret = iommu_device_link(&viommu->iommu, dev);
 	if (ret)
-		goto err_free_dev;
+		goto err_remove_dev_link;
 
 	/*
 	 * Last step creates a default domain and attaches to it. Everything
@@ -912,15 +919,17 @@ static int viommu_add_device(struct device *dev)
 	group = iommu_group_get_for_dev(dev);
 	if (IS_ERR(group)) {
 		ret = PTR_ERR(group);
-		goto err_unlink_dev;
+		goto err_remove_iommu_link;
 	}
 
 	iommu_group_put(group);
 
 	return PTR_ERR_OR_ZERO(group);
 
-err_unlink_dev:
+err_remove_iommu_link:
 	iommu_device_unlink(&viommu->iommu, dev);
+err_remove_dev_link:
+	device_link_del(vdev->link);
 err_free_dev:
 	viommu_put_resv_regions(dev, &vdev->resv_regions);
 	kfree(vdev);
@@ -940,6 +949,7 @@ static void viommu_remove_device(struct device *dev)
 
 	iommu_group_remove_device(dev);
 	iommu_device_unlink(&vdev->viommu->iommu, dev);
+	device_link_del(vdev->link);
 	viommu_put_resv_regions(dev, &vdev->resv_regions);
 	kfree(vdev);
 }
