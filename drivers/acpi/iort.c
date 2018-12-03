@@ -1014,8 +1014,11 @@ void iort_dma_setup(struct device *dev, u64 *dma_addr, u64 *dma_size)
 
 	if (dev_is_pci(dev)) {
 		ret = acpi_dma_get_range(dev, &dmaaddr, &offset, &size);
-		if (ret == -ENODEV)
-			ret = rc_dma_get_range(dev, &size);
+		if (ret == -ENODEV) {
+			struct pci_bus *bus = to_pci_dev(dev)->bus;
+
+			ret = rc_dma_get_range(&bus->dev, &size);
+		}
 	} else {
 		ret = nc_dma_get_range(dev, &size);
 	}
