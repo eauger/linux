@@ -1114,9 +1114,7 @@ static struct dma_map_ops viommu_dma_ops = {
 
 static struct fwnode_handle *viommu_get_fwnode(struct device *dev)
 {
-	if (!dev->fwnode)
-		/* Our last hope, get the fwnode from ACPI IORT */
-		dev->fwnode = iort_get_pci_iommu_fwnode(dev);
+	dev->fwnode = iort_get_pci_iommu_fwnode(dev);
 
 	return dev->fwnode;
 }
