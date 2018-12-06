@@ -6,10 +6,12 @@
 #include <linux/uaccess.h>
 #include <linux/interrupt.h>
 #include <linux/cpu.h>
+#include <linux/irq.h>
 #include <linux/kvm_host.h>
 #include <kvm/arm_vgic.h>
 #include <asm/kvm_emulate.h>
 #include <asm/kvm_mmu.h>
+#include <asm/kvm_nested.h>
 #include "vgic.h"
 
 /*
@@ -229,6 +231,16 @@ int kvm_vgic_vcpu_init(struct kvm_vcpu *vcpu)
 
 	if (!irqchip_in_kernel(vcpu->kvm))
 		return 0;
+
+	if (vcpu_has_nv(vcpu)) {
+		/* Cope with vintage userspace. Maybe we should fail instead */
+		if (vcpu->kvm->arch.vgic.maint_irq == 0)
+			vcpu->kvm->arch.vgic.maint_irq = kvm_vgic_global_state.maint_irq;
+		ret = kvm_vgic_set_owner(vcpu, vcpu->kvm->arch.vgic.maint_irq,
+					 vcpu);
+		if (ret)
+			return ret;
+	}
 
 	/*
 	 * If we are creating a VCPU with a GICv3 we must also register the
@@ -488,12 +500,23 @@ void kvm_vgic_cpu_down(void)
 
 static irqreturn_t vgic_maintenance_handler(int irq, void *data)
 {
+	struct kvm_vcpu *vcpu = *(struct kvm_vcpu **)data;
+
 	/*
 	 * We cannot rely on the vgic maintenance interrupt to be
 	 * delivered synchronously. This means we can only use it to
 	 * exit the VM, and we perform the handling of EOIed
 	 * interrupts on the exit path (see vgic_fold_lr_state).
 	 */
+
+	/* If not nested, deactivate */
+	if (!vcpu || !vgic_state_is_nested(vcpu)) {
+		irq_set_irqchip_state(irq, IRQCHIP_STATE_ACTIVE, false);
+		return IRQ_HANDLED;
+	}
+
+	/* Assume nested from now */
+	vgic_v3_handle_nested_maint_irq(vcpu);
 	return IRQ_HANDLED;
 }
 
@@ -590,6 +613,16 @@ int kvm_vgic_hyp_init(void)
 		kvm_err("Cannot register interrupt %d\n",
 			kvm_vgic_global_state.maint_irq);
 		return ret;
+	}
+
+	if (has_mask) {
+		ret = irq_set_vcpu_affinity(kvm_vgic_global_state.maint_irq,
+					    kvm_get_running_vcpus());
+		if (ret) {
+			kvm_err("Error setting vcpu affinity\n");
+			free_percpu_irq(kvm_vgic_global_state.maint_irq, kvm_get_running_vcpus());
+			return ret;
+		}
 	}
 
 	kvm_info("vgic interrupt IRQ%d\n", kvm_vgic_global_state.maint_irq);
