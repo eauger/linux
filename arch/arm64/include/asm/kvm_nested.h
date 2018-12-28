@@ -131,6 +131,8 @@ unsigned long compute_tlb_inval_range(struct kvm_s2_mmu *mmu, u64 val);
 
 int kvm_init_nv_sysregs(struct kvm *kvm);
 
+#define KVM_NV_GUEST_MAP_SZ	(KVM_PGTABLE_PROT_SW1 | KVM_PGTABLE_PROT_SW0)
+
 #ifdef CONFIG_ARM64_PTR_AUTH
 bool kvm_auth_eretax(struct kvm_vcpu *vcpu, u64 *elr);
 #else
