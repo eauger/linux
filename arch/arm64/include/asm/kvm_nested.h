@@ -132,4 +132,6 @@ unsigned long compute_tlb_inval_range(struct kvm_s2_mmu *mmu, u64 val);
 
 int kvm_init_nv_sysregs(struct kvm *kvm);
 
+#define KVM_NV_GUEST_MAP_SZ	(KVM_PGTABLE_PROT_SW1 | KVM_PGTABLE_PROT_SW0)
+
 #endif /* __ARM64_KVM_NESTED_H */
