@@ -1412,7 +1412,9 @@ static bool transparent_hugepage_adjust(kvm_pfn_t *pfnp, phys_addr_t *ipap)
 		 * page accordingly.
 		 */
 		mask = PTRS_PER_PMD - 1;
-		VM_BUG_ON((gfn & mask) != (pfn & mask));
+		/* Skip memslots with unaligned IPA and user address */
+		if ((gfn & mask) != (pfn & mask))
+			return false;
 		if (pfn & mask) {
 			*ipap &= PMD_MASK;
 			kvm_release_pfn_clean(pfn);
