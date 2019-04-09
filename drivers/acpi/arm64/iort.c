@@ -18,10 +18,16 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 
-#define IORT_TYPE_MASK(type)	(1 << (type))
-#define IORT_MSI_TYPE		(1 << ACPI_IORT_NODE_ITS_GROUP)
-#define IORT_IOMMU_TYPE		((1 << ACPI_IORT_NODE_SMMU) |	\
-				(1 << ACPI_IORT_NODE_SMMU_V3))
+#define IORT_MSI_TYPE		0x1
+#define IORT_IOMMU_TYPE		0x2
+
+#define IORT_TYPE_IN(type, types)				\
+	(((types) == IORT_IOMMU_TYPE &&				\
+	  (((type) == ACPI_IORT_NODE_SMMU) ||			\
+	   ((type) == ACPI_IORT_NODE_SMMU_V3) ||		\
+	   ((type) == ACPI_IORT_NODE_PARAVIRT))) ||		\
+	 ((types) == IORT_MSI_TYPE &&				\
+	  (type) == ACPI_IORT_NODE_ITS_GROUP))
 
 struct iort_its_msi_chip {
 	struct list_head	list;
@@ -396,7 +402,7 @@ static int iort_get_id_mapping_index(struct acpi_iort_node *node)
 
 static struct acpi_iort_node *iort_node_map_id(struct acpi_iort_node *node,
 					       u32 id_in, u32 *id_out,
-					       u8 type_mask)
+					       u8 types)
 {
 	u32 id = id_in;
 
@@ -405,7 +411,7 @@ static struct acpi_iort_node *iort_node_map_id(struct acpi_iort_node *node,
 		struct acpi_iort_id_mapping *map;
 		int i, index;
 
-		if (IORT_TYPE_MASK(node->type) & type_mask) {
+		if (IORT_TYPE_IN(node->type, types)) {
 			if (id_out)
 				*id_out = id;
 			return node;
@@ -457,8 +463,7 @@ fail_map:
 }
 
 static struct acpi_iort_node *iort_node_map_platform_id(
-		struct acpi_iort_node *node, u32 *id_out, u8 type_mask,
-		int index)
+		struct acpi_iort_node *node, u32 *id_out, u8 types, int index)
 {
 	struct acpi_iort_node *parent;
 	u32 id;
@@ -474,8 +479,8 @@ static struct acpi_iort_node *iort_node_map_platform_id(
 	 * as NC (named component) -> SMMU -> ITS. If the type is matched,
 	 * return the initial dev id and its parent pointer directly.
 	 */
-	if (!(IORT_TYPE_MASK(parent->type) & type_mask))
-		parent = iort_node_map_id(parent, id, id_out, type_mask);
+	if (!IORT_TYPE_IN(parent->type, types))
+		parent = iort_node_map_id(parent, id, id_out, types);
 	else
 		if (id_out)
 			*id_out = id;
@@ -853,6 +858,8 @@ static inline bool iort_iommu_driver_enabled(u8 type)
 		return IS_BUILTIN(CONFIG_ARM_SMMU_V3);
 	case ACPI_IORT_NODE_SMMU:
 		return IS_BUILTIN(CONFIG_ARM_SMMU);
+	case ACPI_IORT_NODE_PARAVIRT:
+		return IS_ENABLED(CONFIG_VIRTIO_IOMMU);
 	default:
 		pr_warn("IORT node type %u does not describe an SMMU\n", type);
 		return false;
@@ -1123,6 +1130,11 @@ static void __init acpi_iort_register_irq(int hwirq, const char *name,
 	res->name = name;
 }
 
+static const char *arm_smmu_v3_get_name(struct acpi_iort_node *node)
+{
+	return "arm-smmu-v3";
+}
+
 static int __init arm_smmu_v3_count_resources(struct acpi_iort_node *node)
 {
 	struct acpi_iort_smmu_v3 *smmu;
@@ -1267,6 +1279,11 @@ static int  __init arm_smmu_v3_set_proximity(struct device *dev,
 #define arm_smmu_v3_set_proximity NULL
 #endif
 
+static const char *arm_smmu_get_name(struct acpi_iort_node *node)
+{
+	return "arm-smmu";
+}
+
 static int __init arm_smmu_count_resources(struct acpi_iort_node *node)
 {
 	struct acpi_iort_smmu *smmu;
@@ -1338,6 +1355,11 @@ static void __init arm_smmu_dma_configure(struct device *dev,
 	acpi_dma_configure(dev, attr);
 }
 
+static const char *arm_smmu_v3_pmcg_get_name(struct acpi_iort_node *node)
+{
+	return "arm-smmu-v3-pmcg";
+}
+
 static int __init arm_smmu_v3_pmcg_count_resources(struct acpi_iort_node *node)
 {
 	struct acpi_iort_pmcg *pmcg;
@@ -1393,8 +1415,66 @@ static int __init arm_smmu_v3_pmcg_add_platdata(struct platform_device *pdev)
 	return platform_device_add_data(pdev, &model, sizeof(model));
 }
 
+static const char *paravirt_get_name(struct acpi_iort_node *node)
+{
+	struct acpi_iort_pviommu *pviommu;
+
+	pviommu = (struct acpi_iort_pviommu *)node->node_data;
+
+	switch (pviommu->model) {
+	case ACPI_IORT_NODE_PV_VIRTIO_IOMMU:
+		return "virtio-mmio";
+	default:
+		return NULL;
+	}
+}
+
+static int __init paravirt_count_resources(struct acpi_iort_node *node)
+{
+	/* Mem + IRQ */
+	return 2;
+}
+
+static void __init paravirt_init_resources(struct resource *res,
+					   struct acpi_iort_node *node)
+{
+	int num_res = 0;
+	int hw_irq, trigger;
+	struct acpi_iort_pviommu *pviommu;
+
+	pviommu = (struct acpi_iort_pviommu *)node->node_data;
+
+	res[0].start = pviommu->base_address;
+	res[0].end = pviommu->base_address + pviommu->span - 1;
+	res[0].flags = IORESOURCE_MEM;
+	num_res++;
+
+	hw_irq = IORT_IRQ_MASK(pviommu->interrupt);
+	trigger = IORT_IRQ_TRIGGER_MASK(pviommu->interrupt);
+	acpi_iort_register_irq(hw_irq, "pviommu", trigger, res + 1);
+}
+
+static void __init paravirt_dma_configure(struct device *dev,
+					  struct acpi_iort_node *node)
+{
+	enum dev_dma_attr attr;
+	struct acpi_iort_pviommu *pviommu;
+
+	/* Retrieve PVIOMMU specific data */
+	pviommu = (struct acpi_iort_pviommu *)node->node_data;
+
+	attr = (pviommu->flags & ACPI_IORT_NODE_PV_CACHE_COHERENT) ?
+		DEV_DMA_COHERENT : DEV_DMA_NON_COHERENT;
+
+	/* We expect the dma masks to be equivalent for all PVIOMMU set-ups */
+	dev->dma_mask = &dev->coherent_dma_mask;
+
+	/* Configure DMA for the page table walker */
+	acpi_dma_configure(dev, attr);
+}
+
 struct iort_dev_config {
-	const char *name;
+	const char *(*dev_get_name)(struct acpi_iort_node *node);
 	int (*dev_init)(struct acpi_iort_node *node);
 	void (*dev_dma_configure)(struct device *dev,
 				  struct acpi_iort_node *node);
@@ -1407,7 +1487,7 @@ struct iort_dev_config {
 };
 
 static const struct iort_dev_config iort_arm_smmu_v3_cfg __initconst = {
-	.name = "arm-smmu-v3",
+	.dev_get_name = arm_smmu_v3_get_name,
 	.dev_dma_configure = arm_smmu_v3_dma_configure,
 	.dev_count_resources = arm_smmu_v3_count_resources,
 	.dev_init_resources = arm_smmu_v3_init_resources,
@@ -1415,17 +1495,24 @@ static const struct iort_dev_config iort_arm_smmu_v3_cfg __initconst = {
 };
 
 static const struct iort_dev_config iort_arm_smmu_cfg __initconst = {
-	.name = "arm-smmu",
+	.dev_get_name = arm_smmu_get_name,
 	.dev_dma_configure = arm_smmu_dma_configure,
 	.dev_count_resources = arm_smmu_count_resources,
 	.dev_init_resources = arm_smmu_init_resources,
 };
 
 static const struct iort_dev_config iort_arm_smmu_v3_pmcg_cfg __initconst = {
-	.name = "arm-smmu-v3-pmcg",
+	.dev_get_name = arm_smmu_v3_pmcg_get_name,
 	.dev_count_resources = arm_smmu_v3_pmcg_count_resources,
 	.dev_init_resources = arm_smmu_v3_pmcg_init_resources,
 	.dev_add_platdata = arm_smmu_v3_pmcg_add_platdata,
+};
+
+static const struct iort_dev_config iort_paravirt_cfg __initconst = {
+	.dev_get_name = paravirt_get_name,
+	.dev_dma_configure = paravirt_dma_configure,
+	.dev_count_resources = paravirt_count_resources,
+	.dev_init_resources = paravirt_init_resources,
 };
 
 static __init const struct iort_dev_config *iort_get_dev_cfg(
@@ -1438,6 +1525,8 @@ static __init const struct iort_dev_config *iort_get_dev_cfg(
 		return &iort_arm_smmu_cfg;
 	case ACPI_IORT_NODE_PMCG:
 		return &iort_arm_smmu_v3_pmcg_cfg;
+	case ACPI_IORT_NODE_PARAVIRT:
+		return &iort_paravirt_cfg;
 	default:
 		return NULL;
 	}
@@ -1455,9 +1544,14 @@ static int __init iort_add_platform_device(struct acpi_iort_node *node,
 	struct fwnode_handle *fwnode;
 	struct platform_device *pdev;
 	struct resource *r;
+	const char *name;
 	int ret, count;
 
-	pdev = platform_device_alloc(ops->name, PLATFORM_DEVID_AUTO);
+	name = ops->dev_get_name(node);
+	if (!name)
+		return -ENODEV;
+
+	pdev = platform_device_alloc(name, PLATFORM_DEVID_AUTO);
 	if (!pdev)
 		return -ENOMEM;
 
