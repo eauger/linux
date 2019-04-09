@@ -84,6 +84,24 @@ int of_get_dma_window(struct device_node *dn, const char *prefix, int index,
 }
 EXPORT_SYMBOL_GPL(of_get_dma_window);
 
+/* Whitelist IOMMU drivers that can be built as modules */
+static const char * const of_iommu_always_defer[] = {
+#if IS_MODULE(CONFIG_VIRTIO_IOMMU)
+	"virtio,mmio",
+	"virtio,pci-iommu",
+#endif
+	NULL,
+};
+
+static int of_iommu_deferred_probe_check(struct device *dev,
+					 struct device_node *iommu_node)
+{
+	if (of_device_compatible_match(iommu_node, of_iommu_always_defer))
+		return -EPROBE_DEFER;
+
+	return driver_deferred_probe_check_state(dev);
+}
+
 static int of_iommu_xlate(struct device *dev,
 			  struct of_phandle_args *iommu_spec)
 {
@@ -105,7 +123,7 @@ static int of_iommu_xlate(struct device *dev,
 	 * a proper probe-ordering dependency mechanism in future.
 	 */
 	if (!ops)
-		return driver_deferred_probe_check_state(dev);
+		return of_iommu_deferred_probe_check(dev, iommu_spec->np);
 
 	return ops->of_xlate(dev, iommu_spec);
 }
