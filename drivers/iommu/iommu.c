@@ -1032,6 +1032,7 @@ int iommu_report_device_fault(struct device *dev, struct iommu_fault_event *evt)
 	}
 
 	ret = fparam->handler(evt, fparam->data);
+	trace_dev_fault(dev, &evt->fault);
 done_unlock:
 	mutex_unlock(&param->lock);
 	return ret;
@@ -1604,6 +1605,7 @@ int iommu_page_response(struct device *dev,
 		if (evt->fault.prm.pasid == msg->pasid &&
 		    evt->fault.prm.grpid == msg->grpid) {
 			msg->iommu_data = evt->iommu_private;
+			trace_dev_page_response(dev, msg);
 			ret = domain->ops->page_response(dev, msg);
 			list_del(&evt->list);
 			kfree(evt);
