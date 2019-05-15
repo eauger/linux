@@ -5493,7 +5493,9 @@ static void intel_iommu_get_resv_regions(struct device *device,
 	for_each_rmrr_units(rmrr) {
 		for_each_active_dev_scope(rmrr->devices, rmrr->devices_cnt,
 					  i, i_dev) {
+			struct pci_dev *pdev = to_pci_dev(device);
 			struct iommu_resv_region *resv;
+			enum iommu_resv_type type;
 			size_t length;
 
 			if (i_dev != device &&
@@ -5501,9 +5503,13 @@ static void intel_iommu_get_resv_regions(struct device *device,
 				continue;
 
 			length = rmrr->end_address - rmrr->base_address + 1;
+
+			type = (pdev &&
+				(IS_USB_DEVICE(pdev) || IS_GFX_DEVICE(pdev))) ?
+				IOMMU_RESV_DIRECT_RELAXABLE : IOMMU_RESV_DIRECT;
+
 			resv = iommu_alloc_resv_region(rmrr->base_address,
-						       length, prot,
-						       IOMMU_RESV_DIRECT,
+						       length, prot, type,
 						       GFP_ATOMIC);
 			if (!resv)
 				break;
