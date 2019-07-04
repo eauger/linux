@@ -662,6 +662,9 @@ int iommu_aux_get_pasid(struct iommu_domain *domain, struct device *dev);
 struct iommu_sva *iommu_sva_bind_device(struct device *dev,
 					struct mm_struct *mm,
 					void *drvdata);
+extern struct iommu_sva *
+iommu_sva_bind_group(struct iommu_group *group, struct mm_struct *mm,
+		     void *drvdata);
 void iommu_sva_unbind_device(struct iommu_sva *handle);
 u32 iommu_sva_get_pasid(struct iommu_sva *handle);
 
@@ -1109,6 +1112,14 @@ static inline struct iommu_fwspec *dev_iommu_fwspec_get(struct device *dev)
 {
 	return NULL;
 }
+
+static inline struct iommu_sva *
+iommu_sva_bind_group(struct iommu_group *group, struct mm_struct *mm,
+		     void *drvdata)
+{
+	return -ENODEV;
+}
+
 #endif /* CONFIG_IOMMU_API */
 
 /**
