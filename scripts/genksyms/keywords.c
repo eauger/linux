@@ -54,6 +54,7 @@ static struct resword {
 	{ "struct", STRUCT_KEYW },
 	{ "typedef", TYPEDEF_KEYW },
 	{ "typeof", TYPEOF_KEYW },
+	{ "__uint128_t", BUILTIN_INT_KEYW },
 	{ "union", UNION_KEYW },
 	{ "unsigned", UNSIGNED_KEYW },
 	{ "void", VOID_KEYW },
