@@ -31,6 +31,10 @@
 #include <asm/dma.h>	/* isa_dma_bridge_buggy */
 #include "pci.h"
 
+#include <linux/virtio_pci.h>
+#include <linux/virtio_config.h>
+#include <uapi/linux/virtio_iommu.h>
+
 static ktime_t fixup_debug_start(struct pci_dev *dev,
 				 void (*fn)(struct pci_dev *dev))
 {
@@ -1355,6 +1359,216 @@ DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_AL, PCI_ANY_ID,
    occur when mode detecting */
 DECLARE_PCI_FIXUP_CLASS_EARLY(PCI_VENDOR_ID_VIA, PCI_ANY_ID,
 				PCI_CLASS_STORAGE_IDE, 8, quirk_no_ata_d3);
+
+static inline int virtio_pci_find_capability(struct pci_dev *dev, u8 cfg_type)
+{
+       int pos;
+
+       for (pos = pci_find_capability(dev, PCI_CAP_ID_VNDR);
+            pos > 0;
+            pos = pci_find_next_capability(dev, pos, PCI_CAP_ID_VNDR)) {
+               u8 type;
+               pci_read_config_byte(dev, pos + offsetof(struct virtio_pci_cap,
+                                                        cfg_type),
+                                    &type);
+
+               if (type != cfg_type)
+                       continue;
+
+               /* Ignore structures with reserved BAR values */
+               if (type != VIRTIO_PCI_CAP_PCI_CFG) {
+                       u8 bar;
+
+                       pci_read_config_byte(dev, pos +
+                                            offsetof(struct virtio_pci_cap,
+                                                     bar),
+                                            &bar);
+                       if (bar > 0x5)
+                               continue;
+               }
+
+               return pos;
+       }
+       return 0;
+}
+
+static void read_capability_info(struct pci_dev *dev, int off,
+				 u8 *bar, u32 *offset, u32 *length)
+{
+	u8 id_vndr, cfg_type;
+
+	pci_read_config_byte(dev, off + offsetof(struct virtio_pci_cap,
+						 cap_vndr), &id_vndr);
+	pci_read_config_byte(dev, off + offsetof(struct virtio_pci_cap,
+						 cfg_type), &cfg_type);
+	pci_read_config_byte(dev, off + offsetof(struct virtio_pci_cap, bar),
+			     bar);
+	pci_read_config_dword(dev, off + offsetof(struct virtio_pci_cap, offset),
+			      offset);
+	pci_read_config_dword(dev, off + offsetof(struct virtio_pci_cap, length),
+			      length);
+}
+
+#if 0
+
+static void __iomem *map_capability(struct pci_dev *dev, int off)
+{
+	u8 bar, id_vndr, cfg_type;
+	u32 offset, length;
+	void __iomem *p;
+	size_t barl;
+
+	pci_read_config_byte(dev, off + offsetof(struct virtio_pci_cap,
+						 cap_vndr), &id_vndr);
+	pci_read_config_byte(dev, off + offsetof(struct virtio_pci_cap,
+						 cfg_type), &cfg_type);
+	pci_read_config_byte(dev, off + offsetof(struct virtio_pci_cap,
+						 bar),
+			     &bar);
+	pci_read_config_dword(dev, off + offsetof(struct virtio_pci_cap, offset),
+			     &offset);
+	pci_read_config_dword(dev, off + offsetof(struct virtio_pci_cap, length),
+			      &length);
+	barl = pci_resource_len(dev, bar);
+        dev_warn(&dev->dev,
+		 "*** quirk cap off=%d cfg_type=%d id_vndr=0x%x bar=%d(%lx) offset=%d length=%d\n",
+		off, cfg_type, id_vndr, bar, barl, offset, length);
+
+	if (!length)
+		return NULL;
+
+	p = pci_iomap_range(dev, bar, offset, length);
+	return p;
+}
+
+static void dev_cfg_get(void __iomem *d, unsigned offset,
+		   void *buf, unsigned len)
+{
+	u8 b;
+	__le16 w;
+	__le32 l;
+
+	switch (len) {
+	case 1:
+		b = ioread8(d + offset);
+		memcpy(buf, &b, sizeof b);
+		break;
+	case 2:
+		w = cpu_to_le16(ioread16(d + offset));
+		memcpy(buf, &w, sizeof w);
+		break;
+	case 4:
+		l = cpu_to_le32(ioread32(d + offset));
+		memcpy(buf, &l, sizeof l);
+		break;
+	case 8:
+		l = cpu_to_le32(ioread32(d + offset));
+		memcpy(buf, &l, sizeof l);
+		l = cpu_to_le32(ioread32(d + offset + sizeof l));
+		memcpy(buf + sizeof l, &l, sizeof l);
+		break;
+	default:
+		BUG();
+	}
+}
+
+#endif
+
+static u32 pci_read_u32_cap_pci_cfg(struct pci_dev *dev, u32 cfg, u8 bar, u32 offset)
+{
+	u32 val;
+
+	pci_write_config_byte(dev, cfg + offsetof(struct virtio_pci_cap, bar), bar);
+	pci_write_config_dword(dev, cfg + offsetof(struct virtio_pci_cap, length), 4);
+	pci_write_config_dword(dev, cfg + offsetof(struct virtio_pci_cap, offset), offset);
+	pci_read_config_dword(dev, cfg + sizeof(struct virtio_pci_cap), &val);
+	
+        return val;
+}
+
+static u64 pci_read_u64_cap_pci_cfg(struct pci_dev *dev, u32 cfg, u8 bar, u32 offset)
+{
+	u32 val1, val2;
+	u64 val;
+
+	val1 = pci_read_u32_cap_pci_cfg(dev, cfg, bar, offset);
+	val2 = pci_read_u32_cap_pci_cfg(dev, cfg, bar, offset + 4);
+	val = val1 | (u64)(val2) << 32; 
+	
+        return val;
+}
+
+static void quirk_virtio_iommu(struct pci_dev *dev)
+{
+	u32 offset, length;
+        u8 bar;
+	int common, cfg, devcfg;
+	//void __iomem  *common_base, *config_base, *device_base;
+	u64 page_size_mask;
+	u64 input_range_start;
+	u64 input_range_end;
+	u32 probe_size, last_domain, first_domain;
+
+	pci_info(dev, "**** %s class=%d\n", __func__, dev->class); 
+
+	common = virtio_pci_find_capability(dev, VIRTIO_PCI_CAP_COMMON_CFG);
+	cfg = virtio_pci_find_capability(dev, VIRTIO_PCI_CAP_PCI_CFG);
+	devcfg = virtio_pci_find_capability(dev, VIRTIO_PCI_CAP_DEVICE_CFG);
+
+	dev_warn(&dev->dev,
+		"*** quirk %s pci cap offsets: common=%d cfg=%d device=%d\n",
+		__func__, common, cfg, devcfg);
+
+#if 0
+
+	common_base = map_capability(dev, common);
+	config_base = map_capability(dev, cfg);
+	device_base = map_capability(dev, devcfg);
+
+	dev_warn(&dev->dev, "*** quirk bases common=%p, config=%p; device=%p\n",
+		common_base, config_base, device_base);
+
+	dev_cfg_get(device_base, 0, &page_size_mask, 8);
+	dev_warn(&dev->dev, "*** quirk page_size_mask=0x%llx", page_size_mask);
+	dev_cfg_get(device_base, 8, &input_range_start, 8);
+	dev_warn(&dev->dev, "*** quirk page_size_mask=0x%llx", input_range_start);
+	dev_cfg_get(device_base, 16, &input_range_end, 8);
+	dev_warn(&dev->dev, "*** quirk page_size_mask=0x%llx", input_range_end);
+
+	dev_cfg_get(device_base, 24, &domain_range_start, 4);
+	dev_cfg_get(device_base, 28, &domain_range_end, 4);
+	dev_cfg_get(device_base, 32, &probe_size, 4);
+
+	dev_warn(&dev->dev,
+		"*** quirk domain range start=%d end=%d probe_size=0x%x\n",
+		domain_range_start, domain_range_end, probe_size);
+
+#endif
+
+       read_capability_info(dev, devcfg, &bar, &offset, &length);
+       dev_warn(&dev->dev, "*** quirk read_capability_info bar=%d offset=0x%x length=0x%x",
+		bar, offset, length);
+
+	page_size_mask = pci_read_u64_cap_pci_cfg(dev, cfg, bar, offset);
+	dev_warn(&dev->dev, "*** quirk cap_pci_cfg page_size_mask=0x%llx\n", page_size_mask);
+
+	input_range_start = pci_read_u64_cap_pci_cfg(dev, cfg, bar, offset+8);
+	dev_warn(&dev->dev, "*** quirk cap_pci_cfg input_range_start=0x%llx\n", input_range_start);
+
+	input_range_end = pci_read_u64_cap_pci_cfg(dev, cfg, bar, offset+16);
+	dev_warn(&dev->dev, "*** quirk cap_pci_cfg input_range_end=0x%llx\n", input_range_end);
+
+	first_domain = pci_read_u32_cap_pci_cfg(dev, cfg, bar, offset + 24);
+	dev_warn(&dev->dev, "*** quirk cap_pci_cfg last_domain=%d\n", first_domain);
+
+	last_domain = pci_read_u32_cap_pci_cfg(dev, cfg, bar, offset + 28);
+	dev_warn(&dev->dev, "*** quirk cap_pci_cfg last_domain=%d\n", last_domain);
+
+	probe_size = pci_read_u32_cap_pci_cfg(dev, cfg, bar, offset + 32);
+	dev_warn(&dev->dev, "*** quirk cap_pci_cfg probe_size=0x%x\n", probe_size);
+}
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_REDHAT_QUMRANET , 0x1014,
+			quirk_virtio_iommu);
 
 /*
  * This was originally an Alpha-specific thing, but it really fits here.
