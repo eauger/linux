@@ -1461,7 +1461,7 @@ int acpi_dma_configure(struct device *dev, enum dev_dma_attr attr)
 
 	iort_dma_setup(dev, &dma_addr, &size);
 
-	iommu = iort_iommu_configure(dev);
+	iommu = iort_iommu_configure(dev, dma_addr, size);
 	if (IS_ERR(iommu) && PTR_ERR(iommu) == -EPROBE_DEFER)
 		return -EPROBE_DEFER;
 

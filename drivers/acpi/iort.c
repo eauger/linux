@@ -11,6 +11,7 @@
 #define pr_fmt(fmt)	"ACPI: IORT: " fmt
 
 #include <linux/acpi_iort.h>
+#include <linux/dma-iommu.h>
 #include <linux/iommu.h>
 #include <linux/kernel.h>
 #include <linux/list.h>
@@ -951,6 +952,12 @@ static int iort_pci_iommu_init(struct pci_dev *pdev, u16 alias, void *data)
 	return iort_iommu_xlate(info->dev, parent, streamid);
 }
 
+#ifdef CONFIG_X86
+#define iort_setup_dma_ops iommu_setup_dma_ops
+#else
+#define iort_setup_dma_ops(...)
+#endif
+
 /**
  * iort_iommu_configure - Set-up IOMMU configuration for a device.
  *
@@ -959,7 +966,8 @@ static int iort_pci_iommu_init(struct pci_dev *pdev, u16 alias, void *data)
  * Returns: iommu_ops pointer on configuration success
  *          NULL on configuration failure
  */
-const struct iommu_ops *iort_iommu_configure(struct device *dev)
+const struct iommu_ops *iort_iommu_configure(struct device *dev, u64 dma_base,
+					     u64 dma_size)
 {
 	struct acpi_iort_node *node, *parent;
 	const struct iommu_ops *ops;
@@ -1022,6 +1030,8 @@ const struct iommu_ops *iort_iommu_configure(struct device *dev)
 	} else if (err) {
 		dev_dbg(dev, "Adding to IOMMU failed: %d\n", err);
 		ops = NULL;
+	} else {
+		iort_setup_dma_ops(dev, dma_base, dma_size);
 	}
 
 	return ops;
@@ -1064,7 +1074,8 @@ EXPORT_SYMBOL_GPL(iort_iommu_update_fwnode);
 #else
 int iort_iommu_msi_get_resv_regions(struct device *dev, struct list_head *head)
 { return 0; }
-const struct iommu_ops *iort_iommu_configure(struct device *dev)
+const struct iommu_ops *iort_iommu_configure(struct device *dev, u64 dma_base,
+					     u64 dma_size)
 { return NULL; }
 static void iort_iommu_update_fwnode(struct device *dev,
 				     struct fwnode_handle *fwnode)
