@@ -189,7 +189,10 @@
 /*
  * PMXEVTYPER: Event selection reg
  */
-#define	ARMV8_PMU_EVTYPE_MASK	0xc800ffff	/* Mask for writable bits */
+/* Mask for writable bits featuring 10b evtCount (ARMv8.0-PMU)*/
+#define	ARMV8_PMU_EVTYPE_MASK	0xc80003ff
+/* Mask for writable bits featuring 16b evtCount (ARMv8.1-PMU)*/
+#define ARMV8_1_PMU_EVTYPE_MASK	0xc800ffff
 #define	ARMV8_PMU_EVTYPE_EVENT	0xffff		/* Mask for EVENT bits */
 
 /*

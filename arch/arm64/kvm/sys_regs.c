@@ -815,11 +815,17 @@ static bool access_pmu_evcntr(struct kvm_vcpu *vcpu,
 static bool access_pmu_evtyper(struct kvm_vcpu *vcpu, struct sys_reg_params *p,
 			       const struct sys_reg_desc *r)
 {
-	u64 idx, reg;
+	unsigned int pmuver;
+	u64 idx, reg, dfr0, evtype_mask;
 
 	if (!kvm_arm_pmu_v3_ready(vcpu))
 		return trap_raz_wi(vcpu, p, r);
 
+	dfr0 = read_sanitised_ftr_reg(SYS_ID_AA64DFR0_EL1);
+	pmuver = cpuid_feature_extract_unsigned_field(dfr0,
+						      ID_AA64DFR0_PMUVER_SHIFT);
+	evtype_mask = (pmuver == ID_AA64DFR0_PMUVER_8_0) ?
+			ARMV8_PMU_EVTYPE_MASK : ARMV8_1_PMU_EVTYPE_MASK;
 	if (pmu_access_el0_disabled(vcpu))
 		return false;
 
@@ -842,11 +848,11 @@ static bool access_pmu_evtyper(struct kvm_vcpu *vcpu, struct sys_reg_params *p,
 		return false;
 
 	if (p->is_write) {
-		kvm_pmu_set_counter_event_type(vcpu, p->regval, idx);
-		__vcpu_sys_reg(vcpu, reg) = p->regval & ARMV8_PMU_EVTYPE_MASK;
+		kvm_pmu_set_counter_event_type(vcpu,
+					       p->regval & evtype_mask, idx);
 		kvm_vcpu_pmu_restore_guest(vcpu);
 	} else {
-		p->regval = __vcpu_sys_reg(vcpu, reg) & ARMV8_PMU_EVTYPE_MASK;
+		p->regval = __vcpu_sys_reg(vcpu, reg) & evtype_mask;
 	}
 
 	return true;

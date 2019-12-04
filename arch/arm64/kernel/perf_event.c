@@ -425,7 +425,7 @@ static void armv8pmu_write_counter(struct perf_event *event, u64 value)
 static inline void armv8pmu_write_evtype(int idx, u32 val)
 {
 	armv8pmu_select_counter(idx);
-	val &= ARMV8_PMU_EVTYPE_MASK;
+	val &= ARMV8_1_PMU_EVTYPE_MASK;
 	write_sysreg(val, pmxevtyper_el0);
 }
 
