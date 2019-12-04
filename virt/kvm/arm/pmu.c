@@ -491,6 +491,8 @@ void kvm_pmu_software_increment(struct kvm_vcpu *vcpu, u64 val)
 
 	enable = __vcpu_sys_reg(vcpu, PMCNTENSET_EL0);
 	for (i = 0; i < ARMV8_PMU_CYCLE_IDX; i++) {
+		bool chained = test_bit(i >> 1, vcpu->arch.pmu.chained);
+
 		if (!(val & BIT(i)))
 			continue;
 		type = __vcpu_sys_reg(vcpu, PMEVTYPER0_EL0 + i)
@@ -500,8 +502,20 @@ void kvm_pmu_software_increment(struct kvm_vcpu *vcpu, u64 val)
 			reg = __vcpu_sys_reg(vcpu, PMEVCNTR0_EL0 + i) + 1;
 			reg = lower_32_bits(reg);
 			__vcpu_sys_reg(vcpu, PMEVCNTR0_EL0 + i) = reg;
-			if (!reg)
+			if (reg) /* no overflow */
+				continue;
+			if (chained) {
+				reg = __vcpu_sys_reg(vcpu, PMEVCNTR0_EL0 + i + 1) + 1;
+				reg = lower_32_bits(reg);
+				__vcpu_sys_reg(vcpu, PMEVCNTR0_EL0 + i + 1) = reg;
+				if (reg)
+					continue;
+				/* mark an overflow on high counter */
+				__vcpu_sys_reg(vcpu, PMOVSSET_EL0) |= BIT(i + 1);
+			} else {
+				/* mark an overflow */
 				__vcpu_sys_reg(vcpu, PMOVSSET_EL0) |= BIT(i);
+			}
 		}
 	}
 }
