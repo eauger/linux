@@ -741,6 +741,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		preempt_disable();
 
 		kvm_pmu_flush_hwstate(vcpu);
+		kvm_spe_flush_hwstate(vcpu);
 
 		local_irq_disable();
 
@@ -782,6 +783,7 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		    kvm_request_pending(vcpu)) {
 			vcpu->mode = OUTSIDE_GUEST_MODE;
 			isb(); /* Ensure work in x_flush_hwstate is committed */
+			kvm_spe_sync_hwstate(vcpu);
 			kvm_pmu_sync_hwstate(vcpu);
 			if (static_branch_unlikely(&userspace_irqchip_in_use))
 				kvm_timer_sync_hwstate(vcpu);
@@ -816,11 +818,12 @@ int kvm_arch_vcpu_ioctl_run(struct kvm_vcpu *vcpu, struct kvm_run *run)
 		kvm_arm_clear_debug(vcpu);
 
 		/*
-		 * We must sync the PMU state before the vgic state so
+		 * We must sync the PMU and SPE state before the vgic state so
 		 * that the vgic can properly sample the updated state of the
 		 * interrupt line.
 		 */
 		kvm_pmu_sync_hwstate(vcpu);
+		kvm_spe_sync_hwstate(vcpu);
 
 		/*
 		 * Sync the vgic state before syncing the timer state because

@@ -37,6 +37,9 @@ static inline bool kvm_arm_support_spe_v1(void)
 						      ID_AA64DFR0_PMSVER_SHIFT);
 }
 
+void kvm_spe_flush_hwstate(struct kvm_vcpu *vcpu);
+inline void kvm_spe_sync_hwstate(struct kvm_vcpu *vcpu);
+
 int kvm_arm_spe_v1_set_attr(struct kvm_vcpu *vcpu,
 			    struct kvm_device_attr *attr);
 int kvm_arm_spe_v1_get_attr(struct kvm_vcpu *vcpu,
@@ -48,6 +51,9 @@ int kvm_arm_spe_v1_enable(struct kvm_vcpu *vcpu);
 #define kvm_arm_spe_v1_ready(v)		(false)
 #define kvm_arm_support_spe_v1()	(false)
 #define kvm_arm_spe_irq_initialized(v)	(false)
+
+static inline void kvm_spe_flush_hwstate(struct kvm_vcpu *vcpu) {}
+static inline void kvm_spe_sync_hwstate(struct kvm_vcpu *vcpu) {}
 
 static inline int kvm_arm_spe_v1_set_attr(struct kvm_vcpu *vcpu,
 					  struct kvm_device_attr *attr)

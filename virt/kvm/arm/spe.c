@@ -35,6 +35,68 @@ int kvm_arm_spe_v1_enable(struct kvm_vcpu *vcpu)
 	return 0;
 }
 
+static inline void set_spe_irq_phys_active(struct arm_spe_kvm_info *info,
+					   bool active)
+{
+	int r;
+	r = irq_set_irqchip_state(info->physical_irq, IRQCHIP_STATE_ACTIVE,
+				  active);
+	WARN_ON(r);
+}
+
+void kvm_spe_flush_hwstate(struct kvm_vcpu *vcpu)
+{
+	struct kvm_spe *spe = &vcpu->arch.spe;
+	bool phys_active = false;
+	struct arm_spe_kvm_info *info = arm_spe_get_kvm_info();
+
+	if (!kvm_arm_spe_v1_ready(vcpu))
+		return;
+
+	if (irqchip_in_kernel(vcpu->kvm))
+		phys_active = kvm_vgic_map_is_active(vcpu, spe->irq_num);
+
+	phys_active |= spe->irq_level;
+
+	set_spe_irq_phys_active(info, phys_active);
+}
+
+void kvm_spe_sync_hwstate(struct kvm_vcpu *vcpu)
+{
+	struct kvm_spe *spe = &vcpu->arch.spe;
+	u64 pmbsr;
+	int r;
+	bool service;
+	struct kvm_cpu_context *ctxt = &vcpu->arch.ctxt;
+	struct arm_spe_kvm_info *info = arm_spe_get_kvm_info();
+
+	if (!kvm_arm_spe_v1_ready(vcpu))
+		return;
+
+	set_spe_irq_phys_active(info, false);
+
+	pmbsr = ctxt->sys_regs[PMBSR_EL1];
+	service = !!(pmbsr & BIT(SYS_PMBSR_EL1_S_SHIFT));
+	if (spe->irq_level == service)
+		return;
+
+	spe->irq_level = service;
+
+	if (likely(irqchip_in_kernel(vcpu->kvm))) {
+		r = kvm_vgic_inject_irq(vcpu->kvm, vcpu->vcpu_id,
+					spe->irq_num, service, spe);
+		WARN_ON(r);
+	}
+}
+
+static inline bool kvm_arch_arm_spe_v1_get_input_level(int vintid)
+{
+	struct kvm_vcpu *vcpu = kvm_arm_get_running_vcpu();
+	struct kvm_spe *spe = &vcpu->arch.spe;
+
+	return spe->irq_level;
+}
+
 static int kvm_arm_spe_v1_init(struct kvm_vcpu *vcpu)
 {
 	if (!kvm_arm_support_spe_v1())
@@ -48,6 +110,7 @@ static int kvm_arm_spe_v1_init(struct kvm_vcpu *vcpu)
 
 	if (irqchip_in_kernel(vcpu->kvm)) {
 		int ret;
+		struct arm_spe_kvm_info *info;
 
 		/*
 		 * If using the SPE with an in-kernel virtual GIC
@@ -57,10 +120,18 @@ static int kvm_arm_spe_v1_init(struct kvm_vcpu *vcpu)
 		if (!vgic_initialized(vcpu->kvm))
 			return -ENODEV;
 
+		info = arm_spe_get_kvm_info();
+		if (!info->physical_irq)
+			return -ENODEV;
+
 		ret = kvm_vgic_set_owner(vcpu, vcpu->arch.spe.irq_num,
 					 &vcpu->arch.spe);
 		if (ret)
 			return ret;
+
+		ret = kvm_vgic_map_phys_irq(vcpu, info->physical_irq,
+					    vcpu->arch.spe.irq_num,
+					    kvm_arch_arm_spe_v1_get_input_level);
 	}
 
 	vcpu->arch.spe.created = true;
