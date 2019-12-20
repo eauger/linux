@@ -16,4 +16,10 @@ struct kvm_spe {
 	bool irq_level;
 };
 
+#ifdef CONFIG_KVM_ARM_SPE
+#define kvm_arm_spe_v1_ready(v)		((v)->arch.spe.ready)
+#else
+#define kvm_arm_spe_v1_ready(v)		(false)
+#endif /* CONFIG_KVM_ARM_SPE */
+
 #endif /* __ASM_ARM_KVM_SPE_H */
