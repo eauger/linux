@@ -874,6 +874,8 @@ int kvm_arm_vcpu_arch_set_attr(struct kvm_vcpu *vcpu,
 		break;
 	case KVM_ARM_VCPU_PVTIME_CTRL:
 		ret = kvm_arm_pvtime_set_attr(vcpu, attr);
+	case KVM_ARM_VCPU_SPE_V1_CTRL:
+		ret = kvm_arm_spe_v1_set_attr(vcpu, attr);
 		break;
 	default:
 		ret = -ENXIO;
@@ -897,6 +899,8 @@ int kvm_arm_vcpu_arch_get_attr(struct kvm_vcpu *vcpu,
 		break;
 	case KVM_ARM_VCPU_PVTIME_CTRL:
 		ret = kvm_arm_pvtime_get_attr(vcpu, attr);
+	case KVM_ARM_VCPU_SPE_V1_CTRL:
+		ret = kvm_arm_spe_v1_get_attr(vcpu, attr);
 		break;
 	default:
 		ret = -ENXIO;
@@ -920,6 +924,8 @@ int kvm_arm_vcpu_arch_has_attr(struct kvm_vcpu *vcpu,
 		break;
 	case KVM_ARM_VCPU_PVTIME_CTRL:
 		ret = kvm_arm_pvtime_has_attr(vcpu, attr);
+	case KVM_ARM_VCPU_SPE_V1_CTRL:
+		ret = kvm_arm_spe_v1_has_attr(vcpu, attr);
 		break;
 	default:
 		ret = -ENXIO;

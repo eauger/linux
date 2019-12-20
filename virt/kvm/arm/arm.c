@@ -22,6 +22,7 @@
 #include <trace/events/kvm.h>
 #include <kvm/arm_pmu.h>
 #include <kvm/arm_psci.h>
+#include <kvm/arm_spe.h>
 
 #define CREATE_TRACE_POINTS
 #include "trace.h"

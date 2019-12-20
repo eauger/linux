@@ -74,3 +74,31 @@ Specifies the base address of the stolen time structure for this VCPU. The
 base address must be 64 byte aligned and exist within a valid guest memory
 region. See Documentation/virt/kvm/arm/pvtime.txt for more information
 including the layout of the stolen time structure.
+
+4. GROUP: KVM_ARM_VCPU_SPE_V1_CTRL
+Architectures: ARM64
+
+4.1. ATTRIBUTE: KVM_ARM_VCPU_SPE_V1_IRQ
+Parameters: in kvm_device_attr.addr the address for SPE buffer overflow interrupt
+	    is a pointer to an int
+Returns: -EBUSY: The SPE overflow interrupt is already set
+         -ENXIO: The overflow interrupt not set when attempting to get it
+         -ENODEV: SPEv1 not supported
+         -EINVAL: Invalid SPE overflow interrupt number supplied or
+                  trying to set the IRQ number without using an in-kernel
+                  irqchip.
+
+A value describing the SPEv1 (Statistical Profiling Extension v1) overflow
+interrupt number for this vcpu. This interrupt should be PPI and the interrupt
+type and number must be same for each vcpu.
+
+4.2 ATTRIBUTE: KVM_ARM_VCPU_SPE_V1_INIT
+Parameters: no additional parameter in kvm_device_attr.addr
+Returns: -ENODEV: SPEv1 not supported or GIC not initialized
+         -ENXIO: SPEv1 not properly configured or in-kernel irqchip not
+                 configured as required prior to calling this attribute
+         -EBUSY: SPEv1 already initialized
+
+Request the initialization of the SPEv1.  If using the SPEv1 with an in-kernel
+virtual GIC implementation, this must be done after initializing the in-kernel
+irqchip.
