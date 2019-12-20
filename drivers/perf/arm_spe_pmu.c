@@ -34,6 +34,9 @@
 #include <linux/smp.h>
 #include <linux/vmalloc.h>
 
+#include <linux/kvm_host.h>
+#include <kvm/arm_spe.h>
+
 #include <asm/barrier.h>
 #include <asm/cpufeature.h>
 #include <asm/mmu.h>
@@ -1127,6 +1130,24 @@ static void arm_spe_pmu_dev_teardown(struct arm_spe_pmu *spe_pmu)
 	free_percpu_irq(spe_pmu->irq, spe_pmu->handle);
 }
 
+#ifdef CONFIG_KVM_ARM_SPE
+static struct arm_spe_kvm_info arm_spe_kvm_info;
+
+struct arm_spe_kvm_info *arm_spe_get_kvm_info(void)
+{
+	return &arm_spe_kvm_info;
+}
+
+static void arm_spe_populate_kvm_info(struct arm_spe_pmu *spe_pmu)
+{
+	WARN_ON_ONCE(arm_spe_kvm_info.physical_irq != 0 &&
+		     arm_spe_kvm_info.physical_irq != spe_pmu->irq);
+	arm_spe_kvm_info.physical_irq = spe_pmu->irq;
+}
+#else
+static void arm_spe_populate_kvm_info(struct arm_spe_pmu *spe_pmu) {}
+#endif
+
 /* Driver and device probing */
 static int arm_spe_pmu_irq_probe(struct arm_spe_pmu *spe_pmu)
 {
@@ -1149,6 +1170,8 @@ static int arm_spe_pmu_irq_probe(struct arm_spe_pmu *spe_pmu)
 	}
 
 	spe_pmu->irq = irq;
+	arm_spe_populate_kvm_info(spe_pmu);
+
 	return 0;
 }
 

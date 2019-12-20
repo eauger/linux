@@ -17,6 +17,12 @@ struct kvm_spe {
 	bool irq_level;
 };
 
+struct arm_spe_kvm_info {
+	int physical_irq;
+};
+
+struct arm_spe_kvm_info *arm_spe_get_kvm_info(void);
+
 #ifdef CONFIG_KVM_ARM_SPE
 #define kvm_arm_spe_v1_ready(v)		((v)->arch.spe.ready)
 #define kvm_arm_spe_irq_initialized(v)		\
