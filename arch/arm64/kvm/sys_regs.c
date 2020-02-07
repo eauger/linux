@@ -666,6 +666,11 @@ static bool trap_debug_regs(struct kvm_vcpu *vcpu,
 			    struct sys_reg_params *p,
 			    const struct sys_reg_desc *r)
 {
+	if (forward_traps(vcpu, HCR_TGE) ||
+	    __forward_traps(vcpu, MDCR_EL2, MDCR_EL2_TDE) ||
+	    __forward_traps(vcpu, MDCR_EL2, MDCR_EL2_TDA))
+		return false;
+
 	access_rw(vcpu, p, r);
 	if (p->is_write)
 		vcpu_set_flag(vcpu, DEBUG_DIRTY);
