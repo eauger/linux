@@ -1855,6 +1855,7 @@ static int iommu_group_do_attach_device(struct device *dev, void *data)
 {
 	struct iommu_domain *domain = data;
 
+	dev_info(dev, "%s\n", __func__);
 	return __iommu_attach_device(domain, dev);
 }
 
@@ -1890,6 +1891,7 @@ static int iommu_group_do_detach_device(struct device *dev, void *data)
 {
 	struct iommu_domain *domain = data;
 
+	dev_info(dev, "%s\n", __func__);
 	__iommu_detach_device(domain, dev);
 
 	return 0;

@@ -735,5 +735,8 @@ int vfio_pci_register_irq(struct vfio_pci_device *vdev,
 	vdev->ext_irqs[vdev->num_ext_irqs].flags = flags;
 	vdev->ext_irqs[vdev->num_ext_irqs].trigger = NULL;
 	vdev->num_ext_irqs++;
+
+	dev_info(&vdev->pdev->dev, "%s type=%d subtype=%d flags=%d num_ext_irqs=%d\n",
+		__func__, type, subtype, flags, vdev->num_ext_irqs);
 	return 0;
 }

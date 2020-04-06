@@ -264,6 +264,10 @@ int vfio_pci_set_power_state(struct vfio_pci_device *vdev, pci_power_t state)
 static void vfio_pci_dma_fault_release(struct vfio_pci_device *vdev,
 				       struct vfio_pci_region *region)
 {
+	dev_info(&vdev->pdev->dev, "%s removing fault pages\n", __func__);
+	if (vdev->fault_pages)
+		kfree(vdev->fault_pages);
+
 }
 
 static int vfio_pci_dma_fault_mmap(struct vfio_pci_device *vdev,
@@ -384,11 +388,19 @@ unlock:
 
 #define DMA_FAULT_RING_LENGTH 512
 
-static int vfio_pci_init_dma_fault_region(struct vfio_pci_device *vdev)
+static int vfio_pci_dma_fault_init(struct vfio_pci_device *vdev)
 {
 	struct vfio_region_dma_fault *header;
+	struct iommu_domain *domain;
 	size_t size;
+	bool nested;
 	int ret;
+
+	domain = iommu_get_domain_for_dev(&vdev->pdev->dev);
+	ret = iommu_domain_get_attr(domain, DOMAIN_ATTR_NESTING, &nested);
+	dev_info(&vdev->pdev->dev, "%s nested=%d\n", __func__, nested);
+	if (ret || !nested)
+		return ret;
 
 	mutex_init(&vdev->fault_queue_lock);
 
@@ -399,6 +411,7 @@ static int vfio_pci_init_dma_fault_region(struct vfio_pci_device *vdev)
 	size = ALIGN(sizeof(struct iommu_fault) *
 		     DMA_FAULT_RING_LENGTH, PAGE_SIZE) + PAGE_SIZE;
 
+	dev_info(&vdev->pdev->dev, "%s alloc_fault pages\n", __func__);
 	vdev->fault_pages = kzalloc(size, GFP_KERNEL);
 	if (!vdev->fault_pages)
 		return -ENOMEM;
@@ -424,6 +437,10 @@ static int vfio_pci_init_dma_fault_region(struct vfio_pci_device *vdev)
 	if (ret)
 		goto out;
 
+	ret = vfio_pci_register_irq(vdev, VFIO_IRQ_TYPE_NESTED,
+				    VFIO_IRQ_SUBTYPE_DMA_FAULT,
+				    VFIO_IRQ_INFO_EVENTFD);
+
 	return 0;
 out:
 	kfree(vdev->fault_pages);
@@ -436,6 +453,8 @@ static int vfio_pci_enable(struct vfio_pci_device *vdev)
 	int ret;
 	u16 cmd;
 	u8 msix_pos;
+
+	dev_info(&vdev->pdev->dev, "%s\n", __func__);
 
 	vfio_pci_set_power_state(vdev, PCI_D0);
 
@@ -528,13 +547,7 @@ static int vfio_pci_enable(struct vfio_pci_device *vdev)
 		}
 	}
 
-	ret = vfio_pci_init_dma_fault_region(vdev);
-	if (ret)
-		goto disable_exit;
-
-	ret = vfio_pci_register_irq(vdev, VFIO_IRQ_TYPE_NESTED,
-				    VFIO_IRQ_SUBTYPE_DMA_FAULT,
-				    VFIO_IRQ_INFO_EVENTFD);
+	ret = vfio_pci_dma_fault_init(vdev);
 	if (ret)
 		goto disable_exit;
 
@@ -554,6 +567,7 @@ static void vfio_pci_disable(struct vfio_pci_device *vdev)
 	struct vfio_pci_ioeventfd *ioeventfd, *ioeventfd_tmp;
 	int i, bar;
 
+	dev_info(&vdev->pdev->dev, "%s\n", __func__);
 	/* Stop the device from further DMA */
 	pci_clear_master(pdev);
 
@@ -568,6 +582,10 @@ static void vfio_pci_disable(struct vfio_pci_device *vdev)
 	vdev->num_ext_irqs = 0;
 	kfree(vdev->ext_irqs);
 	vdev->ext_irqs = NULL;
+
+	/* TODO: Failure problematics */
+	dev_info(&vdev->pdev->dev, "%s unregister fault handler\n", __func__);
+	WARN_ON(iommu_unregister_device_fault_handler(&vdev->pdev->dev));
 
 	/* Device closed, don't need mutex here */
 	list_for_each_entry_safe(ioeventfd, ioeventfd_tmp,
@@ -658,13 +676,13 @@ static void vfio_pci_release(void *device_data)
 {
 	struct vfio_pci_device *vdev = device_data;
 
+	dev_info(&vdev->pdev->dev, "%s\n", __func__);
+
 	mutex_lock(&vdev->reflck->lock);
 
 	if (!(--vdev->refcnt)) {
 		vfio_spapr_pci_eeh_release(vdev->pdev);
 		vfio_pci_disable(vdev);
-		/* TODO: Failure problematics */
-		iommu_unregister_device_fault_handler(&vdev->pdev->dev);
 	}
 
 	mutex_unlock(&vdev->reflck->lock);
@@ -1621,6 +1639,7 @@ static void vfio_pci_remove(struct pci_dev *pdev)
 {
 	struct vfio_pci_device *vdev;
 
+	dev_info(&pdev->dev, "%s\n", __func__);
 	vdev = vfio_del_group_dev(&pdev->dev);
 	if (!vdev)
 		return;
@@ -1629,7 +1648,10 @@ static void vfio_pci_remove(struct pci_dev *pdev)
 
 	vfio_iommu_group_put(pdev->dev.iommu_group, &pdev->dev);
 	kfree(vdev->region);
-	kfree(vdev->fault_pages);
+	if (vdev->fault_pages) {
+		kfree(vdev->fault_pages);
+		dev_info(&vdev->pdev->dev, "%s remove fault_pages\n", __func__);
+	}
 	mutex_destroy(&vdev->ioeventfds_lock);
 
 	if (!disable_idle_d3)
