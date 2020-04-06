@@ -1890,7 +1890,7 @@ static void arm_smmu_write_strtab_ent(struct arm_smmu_master *master, u32 sid,
 	 *
 	 * 1. Invalid (all zero) -> bypass/fault (init)
 	 * 2. Bypass/fault -> single stage translation/bypass (attach)
-	 * 3. single stage Translation/bypass -> bypass/fault (detach)
+	 * 3. Single or nested stage Translation/bypass -> bypass/fault (detach)
 	 * 4. S2 -> S1 + S2 (attach_pasid_table)
 	 * 5. S1 + S2 -> S2 (detach_pasid_table)
 	 *
@@ -1919,12 +1919,15 @@ static void arm_smmu_write_strtab_ent(struct arm_smmu_master *master, u32 sid,
 	if (master) {
 		smmu_domain = master->domain;
 		smmu = master->smmu;
+		dev_info(master->dev, "%s sid=%d target domain=%d\n", __func__, sid, !!smmu_domain);
 	}
 
 	if (smmu_domain) {
 		s1_cfg = smmu_domain->s1_cfg;
 		s2_cfg = smmu_domain->s2_cfg;
 		nested = (smmu_domain->stage == ARM_SMMU_DOMAIN_NESTED);
+		if (master)
+			dev_info(master->dev, "%s sid=%d target domain s1=%d s2=%d \n", __func__, sid, !!s1_cfg, !!s2_cfg);
 	}
 
 	if (val & STRTAB_STE_0_V) {
@@ -1949,14 +1952,22 @@ static void arm_smmu_write_strtab_ent(struct arm_smmu_master *master, u32 sid,
 	}
 
 	ste_live = s1_live || s2_live;
+	if (master)
+		dev_info(master->dev, "%s sid=%d from s1_live=%d s2_live=%d \n", __func__, sid, s1_live, s2_live);
 
 	/* Nuke the existing STE_0 value, as we're going to rewrite it */
 	val = STRTAB_STE_0_V;
 
 	/* Bypass/fault */
 
-	abort = (!smmu_domain && disable_bypass) || smmu_domain->abort;
+	if (!smmu_domain)
+		abort = disable_bypass;
+	else
+		abort = smmu_domain->abort;
 	translate = s1_cfg || s2_cfg;
+
+	if (master)
+		dev_info(master->dev, "%s sid=%d abort=%d target=%d\n", __func__, sid, abort, translate);
 
 	if (abort || !translate) {
 		if (abort)
@@ -1972,8 +1983,11 @@ static void arm_smmu_write_strtab_ent(struct arm_smmu_master *master, u32 sid,
 		 * The SMMU can perform negative caching, so we must sync
 		 * the STE regardless of whether the old value was live.
 		 */
-		if (smmu)
+		if (smmu) {
+			if (master)
+				dev_info(master->dev, "%s sid=%d invalidate ste with abort/bypass\n", __func__, sid);
 			arm_smmu_sync_ste_for_sid(smmu, sid);
+		}
 		return;
 	}
 
@@ -1984,6 +1998,8 @@ static void arm_smmu_write_strtab_ent(struct arm_smmu_master *master, u32 sid,
 	if (ste_live) {
 		/* First invalidate the live STE */
 		dst[0] = cpu_to_le64(STRTAB_STE_0_CFG_ABORT);
+		if (master)
+			dev_info(master->dev, "%s sid=%d invalidate ste CFG_ABORT\n", __func__, sid);
 		arm_smmu_sync_ste_for_sid(smmu, sid);
 	}
 
@@ -2033,6 +2049,9 @@ static void arm_smmu_write_strtab_ent(struct arm_smmu_master *master, u32 sid,
 		dst[1] |= cpu_to_le64(FIELD_PREP(STRTAB_STE_1_EATS,
 						 STRTAB_STE_1_EATS_TRANS));
 
+	if (master)
+		dev_info(master->dev, "%s sid=%d invalidate ste with s1=%d s2=%d\n",
+			__func__, sid, !!s1_cfg, !!s2_cfg);
 	arm_smmu_sync_ste_for_sid(smmu, sid);
 	/* See comment in arm_smmu_write_ctx_desc() */
 	WRITE_ONCE(dst[0], cpu_to_le64(val));
@@ -2921,6 +2940,8 @@ static void arm_smmu_install_ste_for_dev(struct arm_smmu_master *master)
 		if (j < i)
 			continue;
 
+		dev_info(master->dev, "%s sid=%d\n", __func__, sid);
+
 		arm_smmu_write_strtab_ent(master, sid, step);
 	}
 }
@@ -3039,6 +3060,9 @@ static void arm_smmu_detach_dev(struct arm_smmu_master *master)
 	if (!smmu_domain)
 		return;
 
+	dev_info(master->dev, "%s NESTED=%d\n",
+		__func__, smmu_domain->stage == ARM_SMMU_DOMAIN_NESTED);
+
 	arm_smmu_disable_ats(master);
 
 	spin_lock_irqsave(&smmu_domain->devices_lock, flags);
@@ -3112,6 +3136,9 @@ static int arm_smmu_attach_dev(struct iommu_domain *domain, struct device *dev)
 
 	master = fwspec->iommu_priv;
 	smmu = master->smmu;
+
+	dev_info(dev, "%s NESTED=%d\n",
+		__func__, smmu_domain->stage == ARM_SMMU_DOMAIN_NESTED);
 
 	arm_smmu_detach_dev(master);
 
@@ -3635,8 +3662,11 @@ static int arm_smmu_attach_pasid_table(struct iommu_domain *domain,
 		goto out;
 	}
 	spin_lock_irqsave(&smmu_domain->devices_lock, flags);
-	list_for_each_entry(master, &smmu_domain->devices, domain_head)
+	list_for_each_entry(master, &smmu_domain->devices, domain_head) {
 		arm_smmu_install_ste_for_dev(master);
+		dev_info(master->dev, "%s guest bypass=%d s1=%d\n",
+			__func__, smmu_domain->abort, !!smmu_domain->s1_cfg);
+	}
 	spin_unlock_irqrestore(&smmu_domain->devices_lock, flags);
 	ret = 0;
 out:
@@ -3660,8 +3690,10 @@ static void arm_smmu_detach_pasid_table(struct iommu_domain *domain)
 	smmu_domain->abort = true;
 
 	spin_lock_irqsave(&smmu_domain->devices_lock, flags);
-	list_for_each_entry(master, &smmu_domain->devices, domain_head)
+	list_for_each_entry(master, &smmu_domain->devices, domain_head) {
+		dev_info(master->dev, "%s\n", __func__);
 		arm_smmu_install_ste_for_dev(master);
+	}
 	spin_unlock_irqrestore(&smmu_domain->devices_lock, flags);
 
 unlock:

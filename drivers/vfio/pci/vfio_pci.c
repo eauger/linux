@@ -399,6 +399,7 @@ static int vfio_pci_init_dma_fault_region(struct vfio_pci_device *vdev)
 	size = ALIGN(sizeof(struct iommu_fault) *
 		     DMA_FAULT_RING_LENGTH, PAGE_SIZE) + PAGE_SIZE;
 
+	dev_info(&vdev->pdev->dev, "%s alloc_fault pages\n", __func__);
 	vdev->fault_pages = kzalloc(size, GFP_KERNEL);
 	if (!vdev->fault_pages)
 		return -ENOMEM;
@@ -664,7 +665,7 @@ static void vfio_pci_release(void *device_data)
 		vfio_spapr_pci_eeh_release(vdev->pdev);
 		vfio_pci_disable(vdev);
 		/* TODO: Failure problematics */
-		iommu_unregister_device_fault_handler(&vdev->pdev->dev);
+		WARN_ON(iommu_unregister_device_fault_handler(&vdev->pdev->dev));
 	}
 
 	mutex_unlock(&vdev->reflck->lock);
@@ -1630,6 +1631,7 @@ static void vfio_pci_remove(struct pci_dev *pdev)
 	vfio_iommu_group_put(pdev->dev.iommu_group, &pdev->dev);
 	kfree(vdev->region);
 	kfree(vdev->fault_pages);
+	dev_info(&vdev->pdev->dev, "%s remove fault_pages\n", __func__);
 	mutex_destroy(&vdev->ioeventfds_lock);
 
 	if (!disable_idle_d3)
