@@ -33,6 +33,10 @@ static inline bool kvm_arm_support_spe_v1(void)
 {
 	u64 dfr0 = read_sanitised_ftr_reg(SYS_ID_AA64DFR0_EL1);
 
+	printk("%s dfr0=0x%llx SPE=%d\n", __func__, dfr0,
+		!!cpuid_feature_extract_unsigned_field(dfr0,
+						       ID_AA64DFR0_PMSVER_SHIFT));
+
 	return !!cpuid_feature_extract_unsigned_field(dfr0,
 						      ID_AA64DFR0_PMSVER_SHIFT);
 }

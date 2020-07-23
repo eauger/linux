@@ -615,6 +615,8 @@ static int kvm_vcpu_first_run_init(struct kvm_vcpu *vcpu)
 		return ret;
 
 	ret = kvm_arm_spe_v1_enable(vcpu);
+	printk("%s kvm_arm_spe_v1_enable on vcpu %d returned %d\n", __func__,
+		vcpu->vcpu_id, ret);
 
 	return ret;
 }

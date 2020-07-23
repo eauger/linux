@@ -1143,6 +1143,8 @@ struct arm_spe_kvm_info *arm_spe_get_kvm_info(void)
 
 static void arm_spe_populate_kvm_info(struct arm_spe_pmu *spe_pmu)
 {
+	printk("%s arm_spe_kvm_info.physical_irq = spe_pmu->irq = %d\n", __func__,
+		spe_pmu->irq);
 	WARN_ON_ONCE(arm_spe_kvm_info.physical_irq != 0 &&
 		     arm_spe_kvm_info.physical_irq != spe_pmu->irq);
 	arm_spe_kvm_info.physical_irq = spe_pmu->irq;
@@ -1262,6 +1264,8 @@ static struct platform_driver arm_spe_pmu_driver = {
 static int __init arm_spe_pmu_init(void)
 {
 	int ret;
+
+	printk("%s **************** \n", __func__);
 
 	ret = cpuhp_setup_state_multi(CPUHP_AP_ONLINE_DYN, DRVNAME,
 				      arm_spe_pmu_cpu_startup,

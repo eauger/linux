@@ -23,13 +23,21 @@ int kvm_arm_spe_v1_enable(struct kvm_vcpu *vcpu)
 	if (irqchip_in_kernel(vcpu->kvm)) {
 		int irq = vcpu->arch.spe.irq_num;
 
-		if (!kvm_arm_spe_irq_initialized(vcpu))
-			return -EINVAL;
+		printk("%s irq=%d\n", __func__, irq);
 
-		if (!irq_is_ppi(irq))
+		if (!kvm_arm_spe_irq_initialized(vcpu)) {
+			printk("%s !kvm_arm_spe_irq_initialized(%d)\n",
+				__func__, vcpu->vcpu_id);
 			return -EINVAL;
+		}
+
+		if (!irq_is_ppi(irq)) {
+			printk("%s irq=%d is not a PPI\n", __func__, irq);
+			return -EINVAL;
+		}
 	}
 
+	printk("%s SPE is ready\n", __func__);
 	vcpu->arch.spe.ready = true;
 
 	return 0;
@@ -99,14 +107,22 @@ static inline bool kvm_arch_arm_spe_v1_get_input_level(int vintid)
 
 static int kvm_arm_spe_v1_init(struct kvm_vcpu *vcpu)
 {
-	if (!kvm_arm_support_spe_v1())
+	printk("%s entry\n", __func__);
+	if (!kvm_arm_support_spe_v1()) {
+		printk("%s !kvm_arm_support_spe_v1\n", __func__);
 		return -ENODEV;
+	}
 
-	if (!test_bit(KVM_ARM_VCPU_SPE_V1, vcpu->arch.features))
+	if (!test_bit(KVM_ARM_VCPU_SPE_V1, vcpu->arch.features)) {
+		printk("%s !test_bit(KVM_ARM_VCPU_SPE_V1, vcpu->arch.features)\n",
+			__func__);
 		return -ENXIO;
+	}
 
-	if (vcpu->arch.spe.created)
+	if (vcpu->arch.spe.created) {
+		printk("%s vcpu->arch.spe.created\n", __func__);
 		return -EBUSY;
+	}
 
 	if (irqchip_in_kernel(vcpu->kvm)) {
 		int ret;
@@ -117,24 +133,32 @@ static int kvm_arm_spe_v1_init(struct kvm_vcpu *vcpu)
 		 * implementation, we require the GIC to be already
 		 * initialized when initializing the SPE.
 		 */
-		if (!vgic_initialized(vcpu->kvm))
+		if (!vgic_initialized(vcpu->kvm)) {
+			printk("%s !vgic_initialized\n", __func__);
 			return -ENODEV;
+		}
 
 		info = arm_spe_get_kvm_info();
-		if (!info->physical_irq)
+		if (!info->physical_irq) {
+			printk("%s !physical_irq\n", __func__);
 			return -ENODEV;
+		}
 
 		ret = kvm_vgic_set_owner(vcpu, vcpu->arch.spe.irq_num,
 					 &vcpu->arch.spe);
-		if (ret)
+		if (ret) {
+			printk("%s kvm_vgic_set_owner (%d)\n", __func__, ret);
 			return ret;
+		}
 
 		ret = kvm_vgic_map_phys_irq(vcpu, info->physical_irq,
 					    vcpu->arch.spe.irq_num,
 					    kvm_arch_arm_spe_v1_get_input_level);
+		printk("%s kvm_vgic_map_phys_irq (%d)\n", __func__, ret);
 	}
 
 	vcpu->arch.spe.created = true;
+	printk("%s spe created for vcpu %d\n", __func__, vcpu->vcpu_id);
 	return 0;
 }
 
@@ -161,36 +185,60 @@ static bool spe_irq_is_valid(struct kvm *kvm, int irq)
 
 int kvm_arm_spe_v1_set_attr(struct kvm_vcpu *vcpu, struct kvm_device_attr *attr)
 {
+	printk("%s entry kvm_arm_spe_v1_set_attr vcpu id=%d\n",
+		__func__, vcpu->vcpu_id);
 	switch (attr->attr) {
 	case KVM_ARM_VCPU_SPE_V1_IRQ: {
 		int __user *uaddr = (int __user *)(long)attr->addr;
 		int irq;
 
-		if (!irqchip_in_kernel(vcpu->kvm))
+		printk("%s KVM_ARM_VCPU_SPE_V1_IRQ vcpu=%d\n", __func__, 
+                       vcpu->vcpu_id);
+		if (!irqchip_in_kernel(vcpu->kvm)) {
+			printk("%s !irqchip_in_kernel\n", __func__);
 			return -EINVAL;
+		}
 
-		if (!test_bit(KVM_ARM_VCPU_SPE_V1, vcpu->arch.features))
+		if (!test_bit(KVM_ARM_VCPU_SPE_V1, vcpu->arch.features)) {
+			printk("%s !KVM_ARM_VCPU_SPE_V1\n", __func__);
 			return -ENODEV;
+		}
 
-		if (get_user(irq, uaddr))
+		if (get_user(irq, uaddr)) {
+			printk("%s !get_user\n", __func__);
 			return -EFAULT;
+		}
 
 		/* The SPE overflow interrupt can be a PPI only */
-		if (!(irq_is_ppi(irq)))
+		if (!(irq_is_ppi(irq))) {
+			printk("%s !ppi %d\n", __func__, irq);
 			return -EINVAL;
+		}
 
-		if (!spe_irq_is_valid(vcpu->kvm, irq))
+		if (!spe_irq_is_valid(vcpu->kvm, irq)) {
+			printk("%s %d not valid\n", __func__, irq);
 			return -EINVAL;
+		}
 
-		if (kvm_arm_spe_irq_initialized(vcpu))
+		if (kvm_arm_spe_irq_initialized(vcpu)) {
+			printk("%s kvm_arm_spe_irq_initialized\n", __func__);
 			return -EBUSY;
+		}
 
-		kvm_debug("Set kvm ARM SPE irq: %d\n", irq);
+		printk("%s Set kvm ARM SPE irq: %d\n", __func__, irq);
 		vcpu->arch.spe.irq_num = irq;
 		return 0;
 	}
 	case KVM_ARM_VCPU_SPE_V1_INIT:
-		return kvm_arm_spe_v1_init(vcpu);
+        {
+		int ret;
+		printk("%s KVM_ARM_VCPU_SPE_V1_INIT vcpu=%d\n", __func__,
+			vcpu->vcpu_id);
+		ret = kvm_arm_spe_v1_init(vcpu);
+		printk("%s kvm_arm_spe_v1_init vcpu=%d(%d)\n", __func__,
+			vcpu->vcpu_id, ret);
+		return ret;
+	}
 	}
 
 	return -ENXIO;
@@ -226,8 +274,10 @@ int kvm_arm_spe_v1_has_attr(struct kvm_vcpu *vcpu, struct kvm_device_attr *attr)
 	case KVM_ARM_VCPU_SPE_V1_IRQ:
 	case KVM_ARM_VCPU_SPE_V1_INIT:
 		if (kvm_arm_support_spe_v1() &&
-		    test_bit(KVM_ARM_VCPU_SPE_V1, vcpu->arch.features))
+		    test_bit(KVM_ARM_VCPU_SPE_V1, vcpu->arch.features)) {
+			printk("%s SPE INIT or IRQ returns 0\n", __func__);
 			return 0;
+		}
 	}
 
 	return -ENXIO;
