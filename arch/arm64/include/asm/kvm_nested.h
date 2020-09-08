@@ -5,6 +5,7 @@
 #include <linux/bitfield.h>
 #include <linux/kvm_host.h>
 #include <asm/kvm_emulate.h>
+#include <asm/kvm_pgtable.h>
 
 static inline bool vcpu_has_nv(const struct kvm_vcpu *vcpu)
 {
@@ -133,5 +134,10 @@ unsigned long compute_tlb_inval_range(struct kvm_s2_mmu *mmu, u64 val);
 int kvm_init_nv_sysregs(struct kvm *kvm);
 
 #define KVM_NV_GUEST_MAP_SZ	(KVM_PGTABLE_PROT_SW1 | KVM_PGTABLE_PROT_SW0)
+
+static inline u64 kvm_encode_nested_level(struct kvm_s2_trans *trans)
+{
+	return FIELD_PREP(KVM_NV_GUEST_MAP_SZ, trans->level);
+}
 
 #endif /* __ARM64_KVM_NESTED_H */
