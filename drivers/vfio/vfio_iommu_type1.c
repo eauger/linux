@@ -2541,7 +2541,7 @@ static int vfio_iommu_iova_add_cap(struct vfio_info_cap *caps,
 	struct vfio_iommu_type1_info_cap_iova_range *iova_cap;
 
 	header = vfio_info_cap_add(caps, size,
-				   VFIO_IOMMU_TYPE1_INFO_CAP_IOVA_RANGE, 1);
+				   VFIO_IOMMU_TYPE1_INFO_CAP_IOVA_RANGE, 2);
 	if (IS_ERR(header))
 		return PTR_ERR(header);
 
