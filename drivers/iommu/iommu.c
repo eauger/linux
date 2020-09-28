@@ -423,7 +423,7 @@ static int iommu_insert_resv_region(struct iommu_resv_region *new,
 check_overlap:
 		top_end = top->start + top->length - 1;
 
-		if (iter->start > top_end + 1) {
+		if (top_end != ULLONG_MAX && iter->start > top_end + 1) {
 			list_move_tail(&iter->list, &stack);
 		} else {
 			top->length = max(top_end, iter_end) - top->start + 1;
