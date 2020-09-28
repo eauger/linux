@@ -33,3 +33,10 @@ Description:    In case an RMRR is used only by graphics or USB devices
 		it is now exposed as "direct-relaxable" instead of "direct".
 		In device assignment use case, for instance, those RMRR
 		are considered to be relaxable and safe.
+
+What:		/sys/kernel/iommu_groups/reserved_regions
+Date: 		Sept 2020
+KernelVersion:  v5.11
+Contact: 	Eric Auger <eric.auger@redhat.com>
+Description:    Regions beyond the device dma_mask and the iommu aperture
+		now are exposed as IOMMU_RESV_RESERVED reserved regions.

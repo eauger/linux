@@ -2511,9 +2511,48 @@ EXPORT_SYMBOL_GPL(iommu_domain_set_attr);
 void iommu_get_resv_regions(struct device *dev, struct list_head *list)
 {
 	const struct iommu_ops *ops = dev->bus->iommu_ops;
+	struct iommu_resv_region *region;
+	struct iommu_domain *domain;
+
+	domain = iommu_get_domain_for_dev(dev);
+
+	if (domain) {
+		struct iommu_domain_geometry geo;
+
+		if (iommu_domain_get_attr(domain, DOMAIN_ATTR_GEOMETRY, &geo))
+			return;
+
+		if (geo.aperture_end < ULLONG_MAX && geo.aperture_end != geo.aperture_start) {
+			region = iommu_alloc_resv_region(geo.aperture_end + 1,
+							 ULLONG_MAX - geo.aperture_end,
+							 0, IOMMU_RESV_RESERVED);
+			if (!region)
+				return;
+			list_add_tail(&region->list, list);
+		}
+
+		if (geo.aperture_start > 0) {
+			region = iommu_alloc_resv_region(0, geo.aperture_start,
+							 0, IOMMU_RESV_RESERVED);
+			if (!region)
+				return;
+			list_add_tail(&region->list, list);
+		}
+	}
 
 	if (ops && ops->get_resv_regions)
 		ops->get_resv_regions(dev, list);
+
+	if (!dev->dma_mask || *dev->dma_mask == ULLONG_MAX)
+		return;
+
+	region = iommu_alloc_resv_region(*dev->dma_mask + 1,
+					 ULLONG_MAX - *dev->dma_mask,
+					 0, IOMMU_RESV_RESERVED);
+	if (!region)
+		return;
+
+	list_add_tail(&region->list, list);
 }
 
 void iommu_put_resv_regions(struct device *dev, struct list_head *list)
