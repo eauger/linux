@@ -200,6 +200,11 @@ int vcpu_nested_state_set(struct kvm_vm *vm, uint32_t vcpuid,
 			  struct kvm_nested_state *state, bool ignore_error);
 #endif
 
+int kvm_device_check_attr(int dev_fd, uint32_t group, uint64_t attr);
+int kvm_create_device(struct kvm_vm *vm, uint64_t type, bool test);
+int kvm_device_access(int dev_fd, uint32_t group, uint64_t attr,
+		      void *val, bool write);
+
 const char *exit_reason_str(unsigned int exit_reason);
 
 void virt_pgd_alloc(struct kvm_vm *vm, uint32_t pgd_memslot);
