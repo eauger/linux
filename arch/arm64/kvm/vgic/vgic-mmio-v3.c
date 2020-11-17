@@ -260,7 +260,7 @@ static bool vgic_mmio_vcpu_rdist_is_last(struct kvm_vcpu *vcpu)
 	if (!rdreg)
 		return false;
 
-	if (!rdreg->count && vgic_cpu->rdreg_index == (rdreg->count - 1)) {
+	if (rdreg->count && vgic_cpu->rdreg_index == (rdreg->count - 1)) {
 		/* check whether there is no other contiguous rdist region */
 		struct list_head *rd_regions = &vgic->rd_regions;
 		struct vgic_redist_region *iter;
