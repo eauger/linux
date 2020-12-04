@@ -792,8 +792,13 @@ static int vgic_v3_insert_redist_region(struct kvm *kvm, uint32_t index,
 	int ret;
 
 	/* single rdist region already set ?*/
-	if (!count && !list_empty(rd_regions))
-		return -EINVAL;
+	if (!count && !list_empty(rd_regions)) {
+		rdreg = list_last_entry(rd_regions,
+				       struct vgic_redist_region, list);
+		if (rdreg->count)
+			return -EINVAL; /* Mixing REDIST and REDIST_REGION API */
+		return -EEXIST;
+	}
 
 	/* cross the end of memory ? */
 	if (base + size < base)
