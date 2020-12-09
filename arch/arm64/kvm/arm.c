@@ -540,8 +540,6 @@ static int kvm_vcpu_first_run_init(struct kvm_vcpu *vcpu)
 	if (!kvm_arm_vcpu_is_finalized(vcpu))
 		return -EPERM;
 
-	vcpu->arch.has_run_once = true;
-
 	if (likely(irqchip_in_kernel(kvm))) {
 		/*
 		 * Map the VGIC hardware resources before running a vcpu the
@@ -559,6 +557,8 @@ static int kvm_vcpu_first_run_init(struct kvm_vcpu *vcpu)
 		 */
 		static_branch_inc(&userspace_irqchip_in_use);
 	}
+
+	vcpu->arch.has_run_once = true;
 
 	ret = kvm_timer_enable(vcpu);
 	if (ret)
