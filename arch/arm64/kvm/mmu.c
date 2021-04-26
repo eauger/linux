@@ -173,10 +173,25 @@ int kvm_arch_flush_remote_tlbs(struct kvm *kvm)
 }
 
 int kvm_arch_flush_remote_tlbs_range(struct kvm *kvm,
-				      gfn_t gfn, u64 nr_pages)
+				     gfn_t gfn, u64 nr_pages)
 {
-	kvm_tlb_flush_vmid_range(&kvm->arch.mmu,
-				gfn << PAGE_SHIFT, nr_pages << PAGE_SHIFT);
+	if (!kvm->arch.nested_mmus) {
+		/*
+		 * For a normal (i.e. non-nested) guest, flush entries for the
+		 * given VMID.
+		 */
+		kvm_tlb_flush_vmid_range(&kvm->arch.mmu,
+					 gfn << PAGE_SHIFT, nr_pages << PAGE_SHIFT);
+	} else {
+		/*
+		 * When supporting nested virtualization, we can have multiple
+		 * VMIDs in play for each VCPU in the VM, so it's really not
+		 * worth it to try to quiesce the system and flush all the
+		 * VMIDs that may be in use, instead just nuke the whole thing.
+		 */
+		kvm_call_hyp(__kvm_flush_vm_context);
+	}
+
 	return 0;
 }
 
