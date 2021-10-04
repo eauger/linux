@@ -1521,6 +1521,7 @@ static int arm_smmu_handle_evt(struct arm_smmu_device *smmu, u64 *evt)
 		ret = -EINVAL;
 		goto out_unlock;
 	}
+	dev_info(master->dev, "%s sid=%d reason=%d\n", __func__, sid, reason);
 
 	ret = iommu_report_device_fault(master->dev, &fault_evt);
 	if (ret && flt->type == IOMMU_FAULT_PAGE_REQ) {

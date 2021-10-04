@@ -1703,6 +1703,8 @@ static void __init iort_node_get_rmr_info(struct acpi_iort_node *iort_node)
 			region->fw_data.rmr.sid = sid;
 			region->fw_data.rmr.smmu = smmu;
 			list_add_tail(&region->list, &iort_rmr_list);
+			printk("%s sid=%d addr=0x%llx size=0x%llx type=%d\n",
+					__func__,  sid, addr, size, type);
 		}
 	}
 }
