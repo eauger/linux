@@ -2045,9 +2045,13 @@ struct iommu_domain *iommu_get_dma_domain(struct device *dev)
 
 struct iommu_domain *iommu_get_msi_domain(struct device *dev)
 {
-	const struct iommu_ops *ops = dev_iommu_ops(dev);
+	const struct iommu_ops *ops;
+	if (!dev->iommu || !dev->iommu->iommu_dev) {
+		return NULL;
+	}
+	ops = dev_iommu_ops(dev);
 
-	if (ops->get_msi_domain)
+	if (ops && ops->get_msi_domain)
 		return ops->get_msi_domain(dev);
 
 	return iommu_get_domain_for_dev(dev);
