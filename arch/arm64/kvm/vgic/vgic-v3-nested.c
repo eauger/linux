@@ -19,6 +19,9 @@
 #define ICH_AP0RN(n)	(ICH_AP0R0_EL2 + (n))
 #define ICH_AP1RN(n)	(ICH_AP1R0_EL2 + (n))
 
+#define CREATE_TRACE_POINTS
+#include "vgic-nested-trace.h"
+
 struct mi_state {
 	u16	eisr;
 	u16	elrsr;
@@ -257,6 +260,10 @@ next:
 		}
 	}
 
+	trace_vgic_create_shadow_lrs(vcpu, kvm_vgic_global_state.nr_lr,
+				     s_cpu_if->vgic_lr,
+				     __ctxt_sys_reg(&vcpu->arch.ctxt, ICH_LR0_EL2));
+
 	container_of(s_cpu_if, struct shadow_if, cpuif)->lr_map = lr_map;
 	s_cpu_if->used_lrs = index;
 }
@@ -283,8 +290,10 @@ void vgic_v3_sync_nested(struct kvm_vcpu *vcpu)
 			goto next;
 
 		lr = __gic_v3_get_lr(index);
-		if (!(lr & ICH_LR_STATE))
+		if (!(lr & ICH_LR_STATE)) {
+			trace_vgic_nested_hw_emulate(i, lr, irq->intid);
 			irq->active = false;
+		}
 
 		vgic_put_irq(vcpu->kvm, irq);
 	next:
@@ -351,6 +360,8 @@ void vgic_v3_put_nested(struct kvm_vcpu *vcpu)
 	__vgic_v3_save_vmcr_aprs(s_cpu_if);
 	__vgic_v3_deactivate_traps(s_cpu_if);
 	__vgic_v3_save_state(s_cpu_if);
+
+	trace_vgic_put_nested(vcpu, kvm_vgic_global_state.nr_lr, s_cpu_if->vgic_lr);
 
 	/*
 	 * Translate the shadow state HW fields back to the virtual ones
