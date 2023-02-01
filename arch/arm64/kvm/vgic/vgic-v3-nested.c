@@ -15,6 +15,9 @@
 
 #include "vgic.h"
 
+#define CREATE_TRACE_POINTS
+#include "vgic-nested-trace.h"
+
 static inline struct vgic_v3_cpu_if *vcpu_shadow_if(struct kvm_vcpu *vcpu)
 {
 	return &vcpu->arch.vgic_cpu.shadow_vgic_v3;
@@ -112,6 +115,10 @@ next:
 		used_lrs = i + 1;
 	}
 
+	trace_vgic_create_shadow_lrs(vcpu, kvm_vgic_global_state.nr_lr,
+				     s_cpu_if->vgic_lr,
+				     __ctxt_sys_reg(&vcpu->arch.ctxt, ICH_LR0_EL2));
+
 	s_cpu_if->used_lrs = used_lrs;
 }
 
@@ -139,8 +146,10 @@ void vgic_v3_sync_nested(struct kvm_vcpu *vcpu)
 			continue; /* oh well, the guest hyp is broken */
 
 		lr = __gic_v3_get_lr(i);
-		if (!(lr & ICH_LR_STATE))
+		if (!(lr & ICH_LR_STATE)) {
+			trace_vgic_nested_hw_emulate(i, lr, l1_irq);
 			irq->active = false;
+		}
 
 		vgic_put_irq(vcpu->kvm, irq);
 	}
@@ -196,6 +205,8 @@ void vgic_v3_put_nested(struct kvm_vcpu *vcpu)
 	int i;
 
 	__vgic_v3_save_state(s_cpu_if);
+
+	trace_vgic_put_nested(vcpu, kvm_vgic_global_state.nr_lr, s_cpu_if->vgic_lr);
 
 	/*
 	 * Translate the shadow state HW fields back to the virtual ones
