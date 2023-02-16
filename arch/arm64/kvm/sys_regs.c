@@ -1459,6 +1459,35 @@ static bool access_arch_timer(struct kvm_vcpu *vcpu,
 		return false;
 	}
 
+	if (vcpu_has_nv(vcpu) && !is_hyp_ctxt(vcpu) && tmr == TIMER_PTIMER) {
+		u64 val = __vcpu_sys_reg(vcpu, CNTHCTL_EL2);
+		bool trap;
+
+		if (!vcpu_el2_e2h_is_set(vcpu))
+			val = (val & (CNTHCTL_EL1PCEN | CNTHCTL_EL1PCTEN)) << 10;
+
+		switch (treg) {
+		case TIMER_REG_CVAL:
+		case TIMER_REG_CTL:
+		case TIMER_REG_TVAL:
+			trap = !(val & (CNTHCTL_EL1PCEN << 10));
+			break;
+
+		case TIMER_REG_CNT:
+			trap = !(val & (CNTHCTL_EL1PCTEN << 10));
+			break;
+
+		default:
+			trap = false;
+			break;
+		}
+
+		if (trap) {
+			kvm_inject_nested_sync(vcpu, kvm_vcpu_get_esr(vcpu));
+			return false;
+		}
+	}
+
 	if (p->is_write)
 		kvm_arm_timer_write_sysreg(vcpu, tmr, treg, p->regval);
 	else
