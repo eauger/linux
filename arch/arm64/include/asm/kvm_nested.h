@@ -128,6 +128,8 @@ int handle_wfx_nested(struct kvm_vcpu *vcpu, bool is_wfe);
 extern bool forward_smc_trap(struct kvm_vcpu *vcpu);
 extern bool __check_nv_sr_forward(struct kvm_vcpu *vcpu);
 
+unsigned long compute_tlb_inval_range(struct kvm_s2_mmu *mmu, u64 val);
+
 int kvm_init_nv_sysregs(struct kvm *kvm);
 
 #endif /* __ARM64_KVM_NESTED_H */
