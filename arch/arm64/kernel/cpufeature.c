@@ -2783,6 +2783,17 @@ static const struct arm64_cpu_capabilities arm64_features[] = {
 		.matches = has_cpuid_feature,
 		.cpu_enable = cpu_enable_dit,
 	},
+	{
+		.desc = "Extended Virtualization Traps",
+		.capability = ARM64_HAS_EVT,
+		.type = ARM64_CPUCAP_SYSTEM_FEATURE,
+		.sys_reg = SYS_ID_AA64MMFR2_EL1,
+		.sign = FTR_UNSIGNED,
+		.field_pos = ID_AA64MMFR2_EL1_EVT_SHIFT,
+		.field_width = 4,
+		.min_field_value = ID_AA64MMFR2_EL1_EVT_IMP,
+		.matches = has_cpuid_feature,
+	},
 	{},
 };
 
