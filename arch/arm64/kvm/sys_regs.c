@@ -1341,6 +1341,14 @@ static bool access_arch_timer(struct kvm_vcpu *vcpu,
 		treg = TIMER_REG_TVAL;
 		break;
 
+	case SYS_CNTV_TVAL_EL0:
+		if (is_hyp_ctxt(vcpu) && vcpu_el2_e2h_is_set(vcpu))
+			tmr = TIMER_HVTIMER;
+		else
+			tmr = TIMER_VTIMER;
+		treg = TIMER_REG_TVAL;
+		break;
+
 	case SYS_AARCH32_CNTP_TVAL:
 	case SYS_CNTP_TVAL_EL02:
 		tmr = TIMER_PTIMER;
@@ -1370,6 +1378,14 @@ static bool access_arch_timer(struct kvm_vcpu *vcpu,
 		treg = TIMER_REG_CTL;
 		break;
 
+	case SYS_CNTV_CTL_EL0:
+		if (is_hyp_ctxt(vcpu) && vcpu_el2_e2h_is_set(vcpu))
+			tmr = TIMER_HVTIMER;
+		else
+			tmr = TIMER_VTIMER;
+		treg = TIMER_REG_CTL;
+		break;
+
 	case SYS_AARCH32_CNTP_CTL:
 	case SYS_CNTP_CTL_EL02:
 		tmr = TIMER_PTIMER;
@@ -1396,6 +1412,14 @@ static bool access_arch_timer(struct kvm_vcpu *vcpu,
 			tmr = TIMER_HPTIMER;
 		else
 			tmr = TIMER_PTIMER;
+		treg = TIMER_REG_CVAL;
+		break;
+
+	case SYS_CNTV_CVAL_EL0:
+		if (is_hyp_ctxt(vcpu) && vcpu_el2_e2h_is_set(vcpu))
+			tmr = TIMER_HVTIMER;
+		else
+			tmr = TIMER_VTIMER;
 		treg = TIMER_REG_CVAL;
 		break;
 
@@ -2529,6 +2553,10 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	{ SYS_DESC(SYS_CNTP_TVAL_EL0), access_arch_timer },
 	{ SYS_DESC(SYS_CNTP_CTL_EL0), access_arch_timer },
 	{ SYS_DESC(SYS_CNTP_CVAL_EL0), access_arch_timer },
+
+	{ SYS_DESC(SYS_CNTV_TVAL_EL0), access_arch_timer },
+	{ SYS_DESC(SYS_CNTV_CTL_EL0), access_arch_timer },
+	{ SYS_DESC(SYS_CNTV_CVAL_EL0), access_arch_timer },
 
 	/* PMEVCNTRn_EL0 */
 	PMU_PMEVCNTR_EL0(0),
