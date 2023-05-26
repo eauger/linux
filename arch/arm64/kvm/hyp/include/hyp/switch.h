@@ -669,6 +669,19 @@ static inline bool fixup_guest_exit(struct kvm_vcpu *vcpu, u64 *exit_code)
 	 */
 	synchronize_vcpu_pstate(vcpu, exit_code);
 
+	if (vcpu_has_nv(vcpu) &&
+	    (!!vcpu_get_flag(vcpu, VCPU_HCR_E2H) ^ vcpu_el2_e2h_is_set(vcpu))) {
+		if (vcpu_el2_e2h_is_set(vcpu)) {
+			sysreg_clear_set(hcr_el2, HCR_NV1, 0);
+			vcpu_set_flag(vcpu, VCPU_HCR_E2H);
+		} else {
+			sysreg_clear_set(hcr_el2, 0, HCR_NV1);
+			vcpu_clear_flag(vcpu, VCPU_HCR_E2H);
+		}
+
+		return true;
+	}
+
 	/*
 	 * Check whether we want to repaint the state one way or
 	 * another.

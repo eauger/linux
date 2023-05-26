@@ -655,6 +655,9 @@ struct kvm_vcpu_arch {
 	/* State flags for kernel bookkeeping, unused by the hypervisor code */
 	u8 sflags;
 
+	/* Bookkeeping flags for NV */
+	u8 nvflags;
+
 	/*
 	 * Don't run the guest (internal implementation need).
 	 *
@@ -858,8 +861,6 @@ struct kvm_vcpu_arch {
 #define DEBUG_STATE_SAVE_SPE	__vcpu_single_flag(iflags, BIT(5))
 /* Save TRBE context if active  */
 #define DEBUG_STATE_SAVE_TRBE	__vcpu_single_flag(iflags, BIT(6))
-/* vcpu running in HYP context */
-#define VCPU_HYP_CONTEXT	__vcpu_single_flag(iflags, BIT(7))
 
 /* SVE enabled for host EL0 */
 #define HOST_SVE_ENABLED	__vcpu_single_flag(sflags, BIT(0))
@@ -878,6 +879,10 @@ struct kvm_vcpu_arch {
 /* WFI instruction trapped */
 #define IN_WFI			__vcpu_single_flag(sflags, BIT(7))
 
+/* vcpu running in HYP context */
+#define VCPU_HYP_CONTEXT	__vcpu_single_flag(nvflags, BIT(0))
+/* vcpu entered with HCR_EL2.E2H set */
+#define VCPU_HCR_E2H		__vcpu_single_flag(nvflags, BIT(1))
 
 /* Pointer to the vcpu's SVE FFR for sve_{save,load}_state() */
 #define vcpu_sve_pffr(vcpu) (kern_hyp_va((vcpu)->arch.sve_state) +	\
