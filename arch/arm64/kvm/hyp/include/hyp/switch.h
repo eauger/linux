@@ -711,6 +711,16 @@ static inline void synchronize_vcpu_pstate(struct kvm_vcpu *vcpu, u64 *exit_code
 	vcpu->arch.ctxt.regs.pstate = read_sysreg_el2(SYS_SPSR);
 }
 
+static inline void check_rewind_hvc(struct kvm_vcpu *vcpu, u64 exit_code)
+{
+	if (ARM_EXCEPTION_CODE(exit_code) != ARM_EXCEPTION_IRQ) {
+		u8 esr_ec = kvm_vcpu_trap_get_class(vcpu);
+
+		if (esr_ec == ESR_ELx_EC_HVC32 || esr_ec == ESR_ELx_EC_HVC64)
+			write_sysreg_el2(read_sysreg_el2(SYS_ELR) - 4, SYS_ELR);
+	}
+}
+
 /*
  * Return true when we were able to fixup the guest exit and should return to
  * the guest, false when we should restore the host state and return to the
@@ -733,21 +743,42 @@ static inline bool fixup_guest_exit(struct kvm_vcpu *vcpu, u64 *exit_code)
 	if (ARM_EXCEPTION_CODE(*exit_code) != ARM_EXCEPTION_IRQ)
 		vcpu->arch.fault.esr_el2 = read_sysreg_el2(SYS_ESR);
 
-	if (ARM_SERROR_PENDING(*exit_code) &&
-	    ARM_EXCEPTION_CODE(*exit_code) != ARM_EXCEPTION_IRQ) {
-		u8 esr_ec = kvm_vcpu_trap_get_class(vcpu);
+	/*
+	 * Check for a flip of the guest's HCR_EL2.E2H behind our back by
+	 * checking NV1. There is no guarantee that we observe all changes,
+	 * as HCR_EL2 cannot be trapped with NV2, so this is a best effort
+	 * attempt at papering over an architecture defect.
+	 *
+	 * When detecting such a flip, we simply flip NV1 the opposite way
+	 * and ERET back into the guest, unless we have a pending SError.
+	 */
+	if (vcpu_has_nv(vcpu) &&
+	    (!!(read_sysreg(hcr_el2) & HCR_NV1) == vcpu_el2_e2h_is_set(vcpu))) {
+		if (vcpu_el2_e2h_is_set(vcpu))
+			sysreg_clear_set(hcr_el2, HCR_NV1, 0);
+		else
+			sysreg_clear_set(hcr_el2, 0, HCR_NV1);
 
 		/*
-		 * HVC already have an adjusted PC, which we need to
-		 * correct in order to return to after having injected
-		 * the SError.
-		 *
-		 * SMC, on the other hand, is *trapped*, meaning its
-		 * preferred return address is the SMC itself.
+		 * We're about to return to the guest with the new NV
+		 * configuration. If the trap was an HVC and that no SError
+		 * is pending, adjust the PC to get the trap again.
 		 */
-		if (esr_ec == ESR_ELx_EC_HVC32 || esr_ec == ESR_ELx_EC_HVC64)
-			write_sysreg_el2(read_sysreg_el2(SYS_ELR) - 4, SYS_ELR);
+		if (!ARM_SERROR_PENDING(*exit_code)) {
+			check_rewind_hvc(vcpu, *exit_code);
+			return true;
+		}
 	}
+
+	/*
+	 * HVC already have an adjusted PC, which we need to correct
+	 * in order to return to after having injected the SError.
+	 *
+	 * SMC, on the other hand, is *trapped*, meaning its preferred
+	 * return address is the SMC itself.
+	 */
+	if (ARM_SERROR_PENDING(*exit_code))
+		check_rewind_hvc(vcpu, *exit_code);
 
 	/*
 	 * We're using the raw exception code in order to only process
