@@ -39,12 +39,23 @@ static void __sysreg_save_vel2_state(struct kvm_cpu_context *ctxt)
 	 * to save anything here.
 	 */
 	if (__vcpu_el2_e2h_is_set(ctxt)) {
+		u64 val;
+
 		ctxt_sys_reg(ctxt, SCTLR_EL2)	= read_sysreg_el1(SYS_SCTLR);
 		ctxt_sys_reg(ctxt, CPTR_EL2)	= read_sysreg_el1(SYS_CPACR);
 		ctxt_sys_reg(ctxt, TTBR0_EL2)	= read_sysreg_el1(SYS_TTBR0);
 		ctxt_sys_reg(ctxt, TTBR1_EL2)	= read_sysreg_el1(SYS_TTBR1);
 		ctxt_sys_reg(ctxt, TCR_EL2)	= read_sysreg_el1(SYS_TCR);
-		ctxt_sys_reg(ctxt, CNTHCTL_EL2)	= read_sysreg_el1(SYS_CNTKCTL);
+
+		/*
+		 * The EL1 view of CNTKCTL_EL1 has a bunch of RES0 bits where
+		 * the interesting CNTHCTL_EL2 bits live. So preserve these
+		 * bits when reading back the guest-visible value.
+		 */
+		val = read_sysreg_el1(SYS_CNTKCTL);
+		val &= CNTKCTL_VALID_BITS;
+		ctxt_sys_reg(ctxt, CNTHCTL_EL2) &= ~CNTKCTL_VALID_BITS;
+		ctxt_sys_reg(ctxt, CNTHCTL_EL2) |= val;
 	}
 
 	ctxt_sys_reg(ctxt, SP_EL2)	= read_sysreg(sp_el1);

@@ -133,6 +133,8 @@ u64 vcpu_read_sys_reg(const struct kvm_vcpu *vcpu, int reg)
 
 		/*
 		 * ELR_EL2 and SPSR_EL2 are special cased for now.
+		 * CNTHCTL_EL2 also requires some special treatment to
+		 * account for the bits that can be set via CNTKCTL_EL1.
 		 */
 		switch (reg) {
 		case ELR_EL2:
@@ -140,6 +142,14 @@ u64 vcpu_read_sys_reg(const struct kvm_vcpu *vcpu, int reg)
 		case SPSR_EL2:
 			val = read_sysreg_el1(SYS_SPSR);
 			return __fixup_spsr_el2_read(&vcpu->arch.ctxt, val);
+		case CNTHCTL_EL2:
+			if (vcpu_el2_e2h_is_set(vcpu)) {
+				val = read_sysreg_el1(SYS_CNTKCTL);
+				val &= CNTKCTL_VALID_BITS;
+				val |= __vcpu_sys_reg(vcpu, reg) & ~CNTKCTL_VALID_BITS;
+				return val;
+			}
+			break;
 		}
 
 		/*
@@ -219,6 +229,16 @@ void vcpu_write_sys_reg(struct kvm_vcpu *vcpu, u64 val, int reg)
 		case SPSR_EL2:
 			val = __fixup_spsr_el2_write(&vcpu->arch.ctxt, val);
 			write_sysreg_el1(val, SYS_SPSR);
+			return;
+		case CNTHCTL_EL2:
+			/*
+			 * If E2H=0, CNHTCTL_EL2 is a pure shadow register.
+			 * Otherwise, some of the bits are backed by
+			 * CNTKCTL_EL1, while the rest is kept in memory.
+			 * Yes, this is fun stuff.
+			 */
+			if (vcpu_el2_e2h_is_set(vcpu))
+				write_sysreg_el1(val, SYS_CNTKCTL);
 			return;
 		}
 
