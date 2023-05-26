@@ -390,10 +390,18 @@ static int __kvm_vcpu_run_vhe(struct kvm_vcpu *vcpu)
 	sysreg_restore_guest_state_vhe(guest_ctxt);
 	__debug_switch_to_guest(vcpu);
 
-	if (is_hyp_ctxt(vcpu))
+	if (is_hyp_ctxt(vcpu)) {
+		if (vcpu_has_nv2(vcpu)) {
+			if (vcpu_el2_e2h_is_set(vcpu))
+				vcpu_set_flag(vcpu, VCPU_HCR_E2H);
+			else
+				vcpu_clear_flag(vcpu, VCPU_HCR_E2H);
+		}
+
 		vcpu_set_flag(vcpu, VCPU_HYP_CONTEXT);
-	else
+	} else {
 		vcpu_clear_flag(vcpu, VCPU_HYP_CONTEXT);
+	}
 
 	do {
 		/* Jump in the fire! */
