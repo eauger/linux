@@ -78,6 +78,7 @@ struct viommu_endpoint {
 	struct viommu_dev		*viommu;
 	struct viommu_domain		*vdomain;
 	struct list_head		resv_regions;
+	struct iommu_domain_geometry	geometry;
 };
 
 struct viommu_request {
@@ -511,6 +512,38 @@ static int viommu_add_resv_mem(struct viommu_endpoint *vdev,
 	return 0;
 }
 
+static int viommu_add_geometry(struct viommu_endpoint *vdev,
+			       struct virtio_iommu_probe_geometry *geo,
+			       size_t len)
+{
+	struct viommu_dev *viommu = vdev->viommu;
+
+	if (len < sizeof(*geo))
+		return -EINVAL;
+
+	if (geo->start >= geo->end ||
+	    geo->start >= viommu->geometry.aperture_end ||
+	    geo->end <= viommu->geometry.aperture_start)
+		return -EINVAL;
+
+	if (geo->start > viommu->geometry.aperture_start)
+		vdev->geometry.aperture_start = geo->start;
+	else
+		vdev->geometry.aperture_start = viommu->geometry.aperture_start;
+
+	if (geo->end < viommu->geometry.aperture_end)
+		vdev->geometry.aperture_end = geo->end;
+	else
+		vdev->geometry.aperture_end = viommu->geometry.aperture_end;
+
+	vdev->geometry.force_aperture = true;
+	dev_info(vdev->dev,
+		 "virtio_iommu set iova geometry to [0x%llx , 0x%llx]\n",
+		 vdev->geometry.aperture_start, vdev->geometry.aperture_end);
+
+	return 0;
+}
+
 static int viommu_probe_endpoint(struct viommu_dev *viommu, struct device *dev)
 {
 	int ret;
@@ -552,6 +585,9 @@ static int viommu_probe_endpoint(struct viommu_dev *viommu, struct device *dev)
 		switch (type) {
 		case VIRTIO_IOMMU_PROBE_T_RESV_MEM:
 			ret = viommu_add_resv_mem(vdev, (void *)prop, len);
+			break;
+		case VIRTIO_IOMMU_PROBE_T_GEOMETRY:
+			ret = viommu_add_geometry(vdev, (void *)prop, len);
 			break;
 		default:
 			dev_err(dev, "unknown viommu prop 0x%x\n", type);
@@ -681,7 +717,10 @@ static int viommu_domain_finalise(struct viommu_endpoint *vdev,
 	vdomain->id		= (unsigned int)ret;
 
 	domain->pgsize_bitmap	= viommu->pgsize_bitmap;
-	domain->geometry	= viommu->geometry;
+	if (vdev->geometry.force_aperture)
+		domain->geometry = vdev->geometry;
+	else
+		domain->geometry = viommu->geometry;
 
 	vdomain->map_flags	= viommu->map_flags;
 	vdomain->viommu		= viommu;
