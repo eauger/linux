@@ -117,6 +117,7 @@ struct virtio_iommu_req_unmap {
 
 #define VIRTIO_IOMMU_PROBE_T_NONE		0
 #define VIRTIO_IOMMU_PROBE_T_RESV_MEM		1
+#define VIRTIO_IOMMU_PROBE_T_GEOMETRY		2
 
 #define VIRTIO_IOMMU_PROBE_T_MASK		0xfff
 
@@ -132,6 +133,12 @@ struct virtio_iommu_probe_resv_mem {
 	struct virtio_iommu_probe_property	head;
 	__u8					subtype;
 	__u8					reserved[3];
+	__le64					start;
+	__le64					end;
+};
+
+struct virtio_iommu_probe_geometry {
+	struct virtio_iommu_probe_property	head;
 	__le64					start;
 	__le64					end;
 };
