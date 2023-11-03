@@ -321,6 +321,23 @@ static __init void parse_cmdline(void)
 		__parse_cmdline(prop, true);
 }
 
+struct midr_override_data {
+	const char		feature[FTR_ALIAS_OPTION_LEN];
+	const struct midr_range	ranges[];
+};
+
+static const struct midr_override_data * const midr_ovr_data[] __initconst = {
+};
+
+static void __init apply_midr_overrides(void)
+{
+	const u64 midr = read_cpuid_id();
+
+	for (int i = 0; i < ARRAY_SIZE(midr_ovr_data); i++)
+		if (is_midr_in_range_list(midr, midr_ovr_data[i]->ranges))
+			__parse_cmdline(midr_ovr_data[i]->feature, false);
+}
+
 /* Keep checkers quiet */
 void init_feature_override(u64 boot_status);
 
@@ -336,6 +353,8 @@ asmlinkage void __init init_feature_override(u64 boot_status)
 	}
 
 	__boot_status = boot_status;
+
+	apply_midr_overrides();
 
 	parse_cmdline();
 
