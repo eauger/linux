@@ -326,7 +326,43 @@ struct midr_override_data {
 	const struct midr_range	ranges[];
 };
 
+static const struct midr_override_data e2h0_ni __initconst = {
+	/*
+	 * These CPUs predate FEAT_E2H0, but have HCR_EL2.E2H RES1
+	 * anyway.
+	 */
+	.feature	= "id_aa64mmfr4.e2h0=0xf",
+	.ranges	= {
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M1_ICESTORM),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M1_FIRESTORM),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M1_ICESTORM_PRO),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M1_FIRESTORM_PRO),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M1_ICESTORM_MAX),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M1_FIRESTORM_MAX),
+		{}
+	},
+};
+
+static const struct midr_override_data e2h0_nv1_ni __initconst = {
+	/*
+	 * These CPUs predate FEAT_E2H0, but have both HCR_EL2.E2H
+	 * RES1 and a non-functional HCR_EL2.NV1.
+	 */
+	.feature	= "id_aa64mmfr4.e2h0=0xe",
+	.ranges	= {
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M2_BLIZZARD),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M2_AVALANCHE),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M2_BLIZZARD_PRO),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M2_AVALANCHE_PRO),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M2_BLIZZARD_MAX),
+		MIDR_ALL_VERSIONS(MIDR_APPLE_M2_AVALANCHE_MAX),
+		{}
+	},
+};
+
 static const struct midr_override_data * const midr_ovr_data[] __initconst = {
+	&e2h0_ni,
+	&e2h0_nv1_ni,
 };
 
 static void __init apply_midr_overrides(void)
