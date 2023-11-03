@@ -140,7 +140,6 @@ void dump_cpu_features(void)
 	pr_emerg("0x%*pb\n", ARM64_NCAPS, &system_cpucaps);
 }
 
-#define __ARM64_EXPAND_RFV(reg, field, val)	reg##_##field##_##val
 #define __ARM64_MAX_POSITIVE(reg, field)				\
 		((reg##_##field##_SIGNED ?				\
 		  BIT(reg##_##field##_WIDTH - 1) :			\
@@ -165,7 +164,7 @@ void dump_cpu_features(void)
  */
 #define ARM64_CPUID_FIELDS(reg, field, min_value)			\
 	__ARM64_CPUID_FIELDS(reg, field,				\
-			     __ARM64_EXPAND_RFV(reg, field, min_value),	\
+			     SYS_FIELD_VALUE(reg, field, min_value),	\
 			     __ARM64_MAX_POSITIVE(reg, field))
 
 /*
@@ -176,7 +175,7 @@ void dump_cpu_features(void)
 #define ARM64_CPUID_FIELDS_NEG(reg, field, max_value)			\
 	__ARM64_CPUID_FIELDS(reg, field,				\
 			     __ARM64_MIN_NEGATIVE(reg, field),		\
-			     __ARM64_EXPAND_RFV(reg, field, max_value))
+			     SYS_FIELD_VALUE(reg, field, max_value))
 
 #define __ARM64_FTR_BITS(SIGNED, VISIBLE, STRICT, TYPE, SHIFT, WIDTH, SAFE_VAL) \
 	{						\
