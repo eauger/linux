@@ -137,6 +137,10 @@ void access_nested_id_reg(struct kvm_vcpu *v, struct sys_reg_params *p,
 		val |= FIELD_PREP(NV_FTR(MMFR2, TTL), 0b0001);
 		break;
 
+	case SYS_ID_AA64MMFR4_EL1:
+		val &= NV_FTR(MMFR4, E2H0);
+		break;
+
 	case SYS_ID_AA64DFR0_EL1:
 		/* Only limited support for PMU, Debug, BPs and WPs */
 		val &= (NV_FTR(DFR0, PMUVer)	|
