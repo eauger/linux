@@ -439,6 +439,7 @@ static const struct arm64_ftr_bits ftr_id_aa64mmfr3[] = {
 
 static const struct arm64_ftr_bits ftr_id_aa64mmfr4[] = {
 	S_ARM64_FTR_BITS(FTR_HIDDEN, FTR_STRICT, FTR_LOWER_SAFE, ID_AA64MMFR4_EL1_E2H0_SHIFT, 4, 0),
+	ARM64_FTR_BITS(FTR_HIDDEN, FTR_STRICT, FTR_HIGHER_SAFE, ID_AA64MMFR4_EL1_NV_frac_SHIFT, 4, 0),
 	ARM64_FTR_END,
 };
 
@@ -2084,12 +2085,8 @@ static bool has_nested_virt_support(const struct arm64_cpu_capabilities *cap,
 	if (kvm_get_mode() != KVM_MODE_NV)
 		return false;
 
-	if (!has_cpuid_feature(cap, scope)) {
-		pr_warn("unavailable: %s\n", cap->desc);
-		return false;
-	}
-
-	return true;
+	return (__system_matches_cap(ARM64_HAS_NV2) |
+		__system_matches_cap(ARM64_HAS_NV2_ONLY));
 }
 
 static bool hvhe_possible(const struct arm64_cpu_capabilities *entry,
@@ -2396,11 +2393,22 @@ static const struct arm64_cpu_capabilities arm64_features[] = {
 		.cpu_enable = cpu_copy_el2regs,
 	},
 	{
+		.capability = ARM64_HAS_NV2,
+		.type = ARM64_CPUCAP_SYSTEM_FEATURE,
+		.matches = has_cpuid_feature,
+		ARM64_CPUID_FIELDS(ID_AA64MMFR2_EL1, NV, NV2)
+	},
+	{
+		.capability = ARM64_HAS_NV2_ONLY,
+		.type = ARM64_CPUCAP_SYSTEM_FEATURE,
+		.matches = has_cpuid_feature,
+		ARM64_CPUID_FIELDS(ID_AA64MMFR4_EL1, NV_frac, NV2_ONLY)
+	},
+	{
 		.desc = "Nested Virtualization Support",
 		.capability = ARM64_HAS_NESTED_VIRT,
 		.type = ARM64_CPUCAP_SYSTEM_FEATURE,
 		.matches = has_nested_virt_support,
-		ARM64_CPUID_FIELDS(ID_AA64MMFR2_EL1, NV, IMP)
 	},
 	{
 		.capability = ARM64_HAS_32BIT_EL0_DO_NOT_USE,
