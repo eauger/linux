@@ -33,11 +33,62 @@ DEFINE_PER_CPU(struct kvm_host_data, kvm_host_data);
 DEFINE_PER_CPU(struct kvm_cpu_context, kvm_hyp_ctxt);
 DEFINE_PER_CPU(unsigned long, kvm_hyp_vector);
 
+/*
+ * Common set of HCR_EL2 bits that we do not want to set while running
+ * a NV guest, irrespective of the context the guest is in.
+ */
+#define __HCR_GUEST_NV_FILTER					\
+	(HCR_TGE | HCR_ATA | HCR_API | HCR_APK | HCR_FIEN |	\
+	 HCR_BSU | HCR_NV | HCR_NV1 | HCR_NV2)
+
+/*
+ * Running as a host? Drop HCR_EL2 setting that should not affect the
+ * execution of EL2, or that are guaranteed to be enforced by the L0
+ * host anyway. For the time being, we don't allow anything. At all.
+ */
+#define HCR_GUEST_NV_INHOST_FILTER	(~(0U) | __HCR_GUEST_NV_FILTER)
+
+/*
+ * Running as a guest? Drop HCR_EL2 setting that should not affect the
+ * execution of EL0/EL1, or that are guaranteed to be enforced by the
+ * L0 host anyway.
+ */
+#define HCR_GUEST_NV_INGUEST_FILTER	__HCR_GUEST_NV_FILTER
+
+static u64 __compute_hcr(struct kvm_vcpu *vcpu)
+{
+	u64 hcr, vhcr_el2, mask;
+
+	hcr = vcpu->arch.hcr_el2;
+
+	if (!vcpu_has_nv(vcpu))
+		return hcr;
+
+	vhcr_el2 = __vcpu_sys_reg(vcpu, HCR_EL2);
+
+	if (is_hyp_ctxt(vcpu)) {
+		hcr |= HCR_NV | HCR_NV2 | HCR_AT | HCR_TTLB;
+
+		if (!vcpu_el2_e2h_is_set(vcpu))
+			hcr |= HCR_NV1;
+
+		mask = HCR_GUEST_NV_INHOST_FILTER;
+
+		write_sysreg_s(vcpu->arch.ctxt.vncr_array, SYS_VNCR_EL2);
+	} else {
+		mask = HCR_GUEST_NV_INGUEST_FILTER;
+	}
+
+	hcr |= vhcr_el2 & ~mask;
+
+	return hcr;
+}
+
 static void __activate_traps(struct kvm_vcpu *vcpu)
 {
 	u64 val;
 
-	___activate_traps(vcpu);
+	___activate_traps(vcpu, __compute_hcr(vcpu));
 
 	if (has_cntpoff()) {
 		struct timer_map map;
