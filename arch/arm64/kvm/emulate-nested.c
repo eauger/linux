@@ -1986,6 +1986,21 @@ static u64 kvm_check_illegal_exception_return(struct kvm_vcpu *vcpu, u64 spsr)
 	return spsr;
 }
 
+static void kvm_vcpu_sanitize_vncr(struct kvm_vcpu *vcpu)
+{
+	struct kvm_sysreg_masks *masks;
+	int i;
+
+	masks = vcpu->kvm->arch.sysreg_masks;
+
+	for_each_set_bit(i, masks->mask_bmap, NR_SYS_REGS - __VNCR_START__) {
+		u64 *r = __ctxt_sys_reg(&vcpu->arch.ctxt, i + __VNCR_START__);
+
+		*r &= ~masks->mask[i].res0;
+		*r |= masks->mask[i].res1;
+	}
+}
+
 void kvm_emulate_nested_eret(struct kvm_vcpu *vcpu)
 {
 	u64 spsr, elr;
@@ -2012,6 +2027,8 @@ void kvm_emulate_nested_eret(struct kvm_vcpu *vcpu)
 	 */
 	*vcpu_pc(vcpu) = elr;
 	*vcpu_cpsr(vcpu) = spsr;
+
+	kvm_vcpu_sanitize_vncr(vcpu);
 
 	kvm_arch_vcpu_load(vcpu, smp_processor_id());
 	preempt_enable();

@@ -951,15 +951,86 @@ static u64 limit_nv_id_reg(u32 id, u64 val)
 
 	return val;
 }
+
+static void set_sysreg_masks(struct kvm *kvm, int sr, u64 res0, u64 res1)
+{
+	int i = sr - __VNCR_START__;
+
+	if (!res0 && !res1)
+		return;
+
+	set_bit(i, kvm->arch.sysreg_masks->mask_bmap);
+	kvm->arch.sysreg_masks->mask[i].res0 = res0;
+	kvm->arch.sysreg_masks->mask[i].res1 = res1;
+}
+
+#define get_idreg_field(kvm, id, fld)					\
+	({								\
+		u64 __val = (kvm)->arch.id_regs[IDREG_IDX(SYS_##id)];	\
+		__val &= id##_##fld##_MASK;				\
+		__val >>= id##_##fld##_SHIFT;				\
+									\
+		__val;							\
+	})
+
 int kvm_init_nv_sysregs(struct kvm *kvm)
 {
+	u64 res0 = 0, res1 = 0;
+	int ret = 0;
+
 	mutex_lock(&kvm->arch.config_lock);
+
+	if (kvm->arch.sysreg_masks)
+		goto out;
+
+	kvm->arch.sysreg_masks = kzalloc(sizeof(*(kvm->arch.sysreg_masks)),
+					 GFP_KERNEL);
+	if (!kvm->arch.sysreg_masks) {
+		ret = -ENOMEM;
+		goto out;
+	}
 
 	for (int i = 0; i < KVM_ARM_ID_REG_NUM; i++)
 		kvm->arch.id_regs[i] = limit_nv_id_reg(IDX_IDREG(i),
 						       kvm->arch.id_regs[i]);
 
+	/* VTTBR_EL2 */
+	if (get_idreg_field(kvm,
+			    ID_AA64MMFR1_EL1,
+			    VMIDBits) != ID_AA64MMFR1_EL1_VMIDBits_16)
+		res0 |= GENMASK(63, 56);
+	set_sysreg_masks(kvm, VTTBR_EL2, res0, 0);
+
+	/* VTCR_EL2 */
+	res0 = GENMASK(63, 32) | GENMASK(30, 20);
+	res1 = BIT(31);
+	set_sysreg_masks(kvm, VTCR_EL2, res0, res1);
+
+	/* VMPIDR_EL2 */
+	res0 = GENMASK(63, 40) | GENMASK(30, 24);
+	res1 = BIT(31);
+	set_sysreg_masks(kvm, VMPIDR_EL2, res0, res1);
+
+	/* HCR_EL2 */
+	res0 = (BIT(39) | HCR_APK | HCR_API | HCR_NV | HCR_NV1 | HCR_NV2 |
+		HCR_AT | BIT(48) | HCR_AMVOFFEN | HCR_ATA | HCR_DCT | HCR_TID5 |
+		GENMASK(63, 59));
+	res1 = HCR_RW;
+	if (get_idreg_field(kvm, ID_AA64MMFR4_EL1, E2H0) >= 0b1000)
+		res1 |= HCR_E2H;
+	if (get_idreg_field(kvm, ID_AA64MMFR1_EL1, LO) == 0)
+		res0 |= HCR_TLOR;
+	if (get_idreg_field(kvm, ID_AA64PFR0_EL1, RAS) == 0)
+		res0 |= HCR_TERR | HCR_TEA | HCR_FIEN;
+	if (get_idreg_field(kvm, ID_AA64MMFR2_EL1, FWB) == 0)
+		res0 |= HCR_FWB;
+	if (get_idreg_field(kvm, ID_AA64MMFR2_EL1, EVT) == 0)
+		res0 |= (HCR_TID4 | HCR_TICAB | HCR_TOCU | HCR_TTLBIS |
+			 HCR_TTLBOS);
+	set_sysreg_masks(kvm, HCR_EL2, res0, res1);
+
+out:
 	mutex_unlock(&kvm->arch.config_lock);
 
-	return 0;
+	return ret;
 }
