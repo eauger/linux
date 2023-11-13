@@ -271,6 +271,8 @@ static inline u16 kvm_mpidr_index(struct kvm_mpidr_data *data, u64 mpidr)
 	return index;
 }
 
+struct kvm_sysreg_masks;
+
 struct kvm_arch {
 	struct kvm_s2_mmu mmu;
 
@@ -352,6 +354,9 @@ struct kvm_arch {
 #define IDREG(kvm, id)		((kvm)->arch.id_regs[IDREG_IDX(id)])
 #define KVM_ARM_ID_REG_NUM	(IDREG_IDX(sys_reg(3, 0, 0, 7, 7)) + 1)
 	u64 id_regs[KVM_ARM_ID_REG_NUM];
+
+	/* Masks for VNCR-baked sysregs */
+	struct kvm_sysreg_masks	*sysreg_masks;
 
 	/*
 	 * For an untrusted host VM, 'pkvm.handle' is used to lookup
@@ -540,6 +545,14 @@ enum vcpu_sysreg {
 	VNCR(ICH_VMCR_EL2),
 
 	NR_SYS_REGS	/* Nothing after this line! */
+};
+
+struct kvm_sysreg_masks {
+	DECLARE_BITMAP(mask_bmap, NR_SYS_REGS - __VNCR_START__);
+	struct {
+		u64	res0;
+		u64	res1;
+	} mask[NR_SYS_REGS - __VNCR_START__];
 };
 
 struct kvm_cpu_context {
