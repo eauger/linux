@@ -129,6 +129,7 @@ static void vgic_v3_create_shadow_lr(struct kvm_vcpu *vcpu)
 		vgic_put_irq(vcpu->kvm, irq);
 
 next:
+		lr &= ~ICH_LR_EOI; /* Why? */
 		s_cpu_if->vgic_lr[i] = lr;
 		used_lrs = i + 1;
 	}
