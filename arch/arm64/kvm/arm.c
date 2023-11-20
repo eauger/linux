@@ -782,6 +782,15 @@ static void kvm_vcpu_sleep(struct kvm_vcpu *vcpu)
 void kvm_vcpu_wfi(struct kvm_vcpu *vcpu)
 {
 	/*
+	 * If we're in nested state and the guest hypervisor does not trap
+	 * WFI, we're in a bit of trouble, as we don't have a good handle
+	 * on the interrupts that are pending for the guest yet. Revisit
+	 * this at some point.
+	 */
+	if (vgic_state_is_nested(vcpu))
+		return;
+
+	/*
 	 * Sync back the state of the GIC CPU interface so that we have
 	 * the latest PMR and group enables. This ensures that
 	 * kvm_arch_vcpu_runnable has up-to-date data to decide whether
