@@ -2085,7 +2085,7 @@ static bool has_nested_virt_support(const struct arm64_cpu_capabilities *cap,
 	if (kvm_get_mode() != KVM_MODE_NV)
 		return false;
 
-	return (__system_matches_cap(ARM64_HAS_NV2) |
+	return (__system_matches_cap(ARM64_HAS_NV2) ||
 		__system_matches_cap(ARM64_HAS_NV2_ONLY));
 }
 
