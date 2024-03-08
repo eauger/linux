@@ -14,6 +14,13 @@ config VFIO_PLATFORM_AMDXGBE_RESET
 
 	  If you don't know what to do here, say N.
 
+config VFIO_PLATFORM_TEGRA234_MGBE_RESET
+	tristate "VFIO support for NVidia tegra234 MGBE reset"
+	help
+	  Enables the VFIO platform driver to handle reset for NVidia tegra234 mgbe
+
+	  If you don't know what to do here, say N.
+
 config VFIO_PLATFORM_BCMFLEXRM_RESET
 	tristate "VFIO support for Broadcom FlexRM reset"
 	depends on ARCH_BCM_IPROC || COMPILE_TEST
