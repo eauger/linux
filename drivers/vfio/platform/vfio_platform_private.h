@@ -68,6 +68,8 @@ struct vfio_platform_device {
 
 	const struct vfio_platform_reset_ops *reset_ops;
 	bool				reset_required;
+	/* This field can be used by reset driver to store some data */
+	void		*reset_opaque;
 };
 
 /**
