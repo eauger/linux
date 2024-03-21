@@ -68,6 +68,8 @@ struct vfio_platform_device {
 	int	(*of_reset)(struct vfio_platform_device *vdev);
 
 	bool				reset_required;
+	/* This field can be used by reset driver to store some data */
+	void		*reset_opaque;
 };
 
 typedef int (*vfio_platform_reset_fn_t)(struct vfio_platform_device *vdev);
