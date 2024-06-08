@@ -909,12 +909,31 @@ static void limit_nv_id_regs(struct kvm *kvm)
 
 	/* Force TTL support */
 	val |= FIELD_PREP(NV_FTR(MMFR2, TTL), 0b0001);
+	tmp = kvm_read_vm_id_reg(kvm, SYS_ID_AA64MMFR1_EL1);
 	kvm_set_vm_id_reg(kvm, SYS_ID_AA64MMFR2_EL1, val);
 
-	val = 0;
-	if (!cpus_have_final_cap(ARM64_HAS_HCR_NV1))
-		val |= FIELD_PREP(NV_FTR(MMFR4, E2H0),
-				  ID_AA64MMFR4_EL1_E2H0_NI_NV1);
+	/*
+	 * You get EITHER
+	 *
+	 * - FEAT_VHE without FEAT_E2H0
+	 * - FEAT_NV limited to FEAT_NV2 and HCR_EL2.NV1 RES0
+	 *
+	 * OR
+	 *
+	 * - FEAT_E2H0 without FEAT_VHE or FEAT_NV
+	 *
+	 * Life is too short for anything else.
+	 */
+	val = kvm_read_vm_id_reg(kvm, SYS_ID_AA64MMFR4_EL1);
+	val &= ID_AA64MMFR4_EL1_NV_frac;
+	tmp = kvm_read_vm_id_reg(kvm, SYS_ID_AA64MMFR1_EL1);
+	if (FIELD_GET(NV_FTR(MMFR1, VH), tmp))
+		val |= val ? FIELD_PREP(NV_FTR(MMFR4, E2H0),
+					ID_AA64MMFR4_EL1_E2H0_NI_NV1)
+			   : FIELD_PREP(NV_FTR(MMFR4, E2H0),
+					ID_AA64MMFR4_EL1_E2H0_NI);
+	else
+		val &= ~ID_AA64MMFR4_EL1_NV_frac;
 	kvm_set_vm_id_reg(kvm, SYS_ID_AA64MMFR4_EL1, val);
 
 	/* Only limited support for PMU, Debug, BPs, WPs, and HPMN0 */
