@@ -764,6 +764,11 @@ static int viommu_attach_dev(struct iommu_domain *domain, struct device *dev)
 	if (vdomain->bypass)
 		req.flags |= cpu_to_le32(VIRTIO_IOMMU_ATTACH_F_BYPASS);
 
+	if (domain->type == IOMMU_DOMAIN_DMA_FQ &&
+	    virtio_has_feature(vdomain->viommu->vdev,
+			       VIRTIO_IOMMU_F_LAZY_IOTLB_FLUSH))
+		req.flags |= cpu_to_le32(VIRTIO_IOMMU_ATTACH_F_LAZY);
+
 	for (i = 0; i < fwspec->num_ids; i++) {
 		req.endpoint = cpu_to_le32(fwspec->ids[i]);
 
@@ -904,6 +909,18 @@ static phys_addr_t viommu_iova_to_phys(struct iommu_domain *domain,
 	return paddr;
 }
 
+static int viommu_iotlb_flush(struct viommu_domain *vdomain)
+{
+	struct virtio_iommu_req_iotlb_flush flush;
+
+	flush = (struct virtio_iommu_req_iotlb_flush) {
+		.head.type	= VIRTIO_IOMMU_T_IOTLB_FLUSH,
+		.domain		= cpu_to_le32(vdomain->id),
+	};
+
+	return viommu_send_req_sync(vdomain->viommu, &flush, sizeof(flush));
+}
+
 static void viommu_iotlb_sync(struct iommu_domain *domain,
 			      struct iommu_iotlb_gather *gather)
 {
@@ -937,6 +954,9 @@ static void viommu_flush_iotlb_all(struct iommu_domain *domain)
 	if (!vdomain->nr_endpoints)
 		return;
 	viommu_sync_req(vdomain->viommu);
+	if (virtio_has_feature(vdomain->viommu->vdev,
+			       VIRTIO_IOMMU_F_LAZY_IOTLB_FLUSH))
+		WARN_ON(viommu_iotlb_flush(vdomain));
 }
 
 static void viommu_get_resv_regions(struct device *dev, struct list_head *head)
@@ -1240,6 +1260,7 @@ static unsigned int features[] = {
 	VIRTIO_IOMMU_F_PROBE,
 	VIRTIO_IOMMU_F_MMIO,
 	VIRTIO_IOMMU_F_BYPASS_CONFIG,
+	VIRTIO_IOMMU_F_LAZY_IOTLB_FLUSH,
 };
 
 static struct virtio_device_id id_table[] = {
