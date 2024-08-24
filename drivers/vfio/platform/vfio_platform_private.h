@@ -37,6 +37,7 @@ struct vfio_platform_region {
 	resource_size_t		size;
 	u32			flags;
 	u32			type;
+	const char		*name;
 #define VFIO_PLATFORM_REGION_TYPE_MMIO	1
 #define VFIO_PLATFORM_REGION_TYPE_PIO	2
 	void __iomem		*ioaddr;
@@ -104,6 +105,10 @@ int vfio_platform_set_irqs_ioctl(struct vfio_platform_device *vdev,
 void __vfio_platform_register_reset(struct vfio_platform_reset_node *n);
 void vfio_platform_unregister_reset(const char *compat,
 				    vfio_platform_reset_fn_t fn);
+
+struct vfio_platform_region *
+vfio_platform_get_region(struct vfio_platform_device *vdev, const char *name);
+
 #define vfio_platform_register_reset(__compat, __reset)		\
 static struct vfio_platform_reset_node __reset ## _node = {	\
 	.owner = THIS_MODULE,					\

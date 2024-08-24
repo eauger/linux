@@ -153,6 +153,7 @@ static int vfio_platform_regions_init(struct vfio_platform_device *vdev)
 		vdev->regions[i].addr = res->start;
 		vdev->regions[i].size = resource_size(res);
 		vdev->regions[i].flags = 0;
+		vdev->regions[i].name = res->name;
 
 		switch (resource_type(res)) {
 		case IORESOURCE_MEM:
@@ -187,6 +188,19 @@ err:
 	kfree(vdev->regions);
 	return -EINVAL;
 }
+
+struct vfio_platform_region*
+vfio_platform_get_region(struct vfio_platform_device *vdev, const char *name)
+{
+	int i;
+
+	for (i = 0; i < vdev->num_regions; i++) {
+		if (!strcmp(vdev->regions[i].name, name))
+			return &vdev->regions[i];
+	}
+	return NULL;
+}
+EXPORT_SYMBOL_GPL(vfio_platform_get_region);
 
 static void vfio_platform_regions_cleanup(struct vfio_platform_device *vdev)
 {
