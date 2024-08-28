@@ -66,7 +66,12 @@ static int vfio_platform_calxedaxgmac_reset(struct vfio_platform_device *vdev)
 	return 0;
 }
 
-module_vfio_reset_handler("calxeda,hb-xgmac", vfio_platform_calxedaxgmac_reset);
+static const struct vfio_platform_reset_ops
+vfio_platform_calxedaxgmac_reset_ops = {
+	.reset = vfio_platform_calxedaxgmac_reset,
+};
+
+module_vfio_reset_handler("calxeda,hb-xgmac", vfio_platform_calxedaxgmac_reset_ops);
 
 MODULE_VERSION(DRIVER_VERSION);
 MODULE_LICENSE("GPL v2");

@@ -65,18 +65,26 @@ struct vfio_platform_device {
 	struct resource*
 		(*get_resource)(struct vfio_platform_device *vdev, int i);
 	int	(*get_irq)(struct vfio_platform_device *vdev, int i);
-	int	(*of_reset)(struct vfio_platform_device *vdev);
 
+	const struct vfio_platform_reset_ops *reset_ops;
 	bool				reset_required;
 };
 
-typedef int (*vfio_platform_reset_fn_t)(struct vfio_platform_device *vdev);
+/**
+ * struct vfio_platform_reset_ops - reset ops
+ *
+ * @reset:	reset function (required)
+ */
+struct vfio_platform_reset_ops {
+	int (*reset)(struct vfio_platform_device *vdev);
+};
+
 
 struct vfio_platform_reset_node {
 	struct list_head link;
 	char *compat;
 	struct module *owner;
-	vfio_platform_reset_fn_t of_reset;
+	struct vfio_platform_reset_ops ops;
 };
 
 int vfio_platform_init_common(struct vfio_platform_device *vdev);
@@ -104,29 +112,29 @@ int vfio_platform_set_irqs_ioctl(struct vfio_platform_device *vdev,
 
 void __vfio_platform_register_reset(struct vfio_platform_reset_node *n);
 void vfio_platform_unregister_reset(const char *compat,
-				    vfio_platform_reset_fn_t fn);
+				    struct vfio_platform_reset_ops ops);
 
 struct vfio_platform_region *
 vfio_platform_get_region(struct vfio_platform_device *vdev, const char *name);
 
-#define vfio_platform_register_reset(__compat, __reset)		\
-static struct vfio_platform_reset_node __reset ## _node = {	\
+#define vfio_platform_register_reset(__compat, __ops)		\
+static struct vfio_platform_reset_node __ops ## _node = {	\
 	.owner = THIS_MODULE,					\
 	.compat = __compat,					\
-	.of_reset = __reset,					\
+	.ops = __ops,						\
 };								\
-__vfio_platform_register_reset(&__reset ## _node)
+__vfio_platform_register_reset(&__ops ## _node)
 
-#define module_vfio_reset_handler(compat, reset)		\
+#define module_vfio_reset_handler(compat, ops)			\
 MODULE_ALIAS("vfio-reset:" compat);				\
 static int __init reset ## _module_init(void)			\
 {								\
-	vfio_platform_register_reset(compat, reset);		\
+	vfio_platform_register_reset(compat, ops);		\
 	return 0;						\
 };								\
 static void __exit reset ## _module_exit(void)			\
 {								\
-	vfio_platform_unregister_reset(compat, reset);		\
+	vfio_platform_unregister_reset(compat, ops);		\
 };								\
 module_init(reset ## _module_init);				\
 module_exit(reset ## _module_exit)

@@ -109,7 +109,12 @@ static int vfio_platform_amdxgbe_reset(struct vfio_platform_device *vdev)
 	return 0;
 }
 
-module_vfio_reset_handler("amd,xgbe-seattle-v1a", vfio_platform_amdxgbe_reset);
+static const struct vfio_platform_reset_ops
+vfio_platform_amdxgbe_reset_ops = {
+	.reset = vfio_platform_amdxgbe_reset,
+};
+
+module_vfio_reset_handler("amd,xgbe-seattle-v1a", vfio_platform_amdxgbe_reset_ops);
 
 MODULE_VERSION("0.1");
 MODULE_LICENSE("GPL v2");

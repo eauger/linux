@@ -28,23 +28,23 @@
 static LIST_HEAD(reset_list);
 static DEFINE_MUTEX(driver_lock);
 
-static vfio_platform_reset_fn_t vfio_platform_lookup_reset(const char *compat,
-					struct module **module)
+static const struct vfio_platform_reset_ops *
+vfio_platform_lookup_reset(const char *compat, struct module **module)
 {
+	const struct vfio_platform_reset_ops *ops = NULL;
 	struct vfio_platform_reset_node *iter;
-	vfio_platform_reset_fn_t reset_fn = NULL;
 
 	mutex_lock(&driver_lock);
 	list_for_each_entry(iter, &reset_list, link) {
 		if (!strcmp(iter->compat, compat) &&
 			try_module_get(iter->owner)) {
 			*module = iter->owner;
-			reset_fn = iter->of_reset;
+			ops = &iter->ops;
 			break;
 		}
 	}
 	mutex_unlock(&driver_lock);
-	return reset_fn;
+	return ops;
 }
 
 static int vfio_platform_acpi_probe(struct vfio_platform_device *vdev,
@@ -106,7 +106,7 @@ static bool vfio_platform_has_reset(struct vfio_platform_device *vdev)
 	if (VFIO_PLATFORM_IS_ACPI(vdev))
 		return vfio_platform_acpi_has_reset(vdev);
 
-	return vdev->of_reset ? true : false;
+	return vdev->reset_ops ? true : false;
 }
 
 static int vfio_platform_get_reset(struct vfio_platform_device *vdev)
@@ -114,15 +114,15 @@ static int vfio_platform_get_reset(struct vfio_platform_device *vdev)
 	if (VFIO_PLATFORM_IS_ACPI(vdev))
 		return vfio_platform_acpi_has_reset(vdev) ? 0 : -ENOENT;
 
-	vdev->of_reset = vfio_platform_lookup_reset(vdev->compat,
-						    &vdev->reset_module);
-	if (!vdev->of_reset) {
+	vdev->reset_ops = vfio_platform_lookup_reset(vdev->compat,
+						     &vdev->reset_module);
+	if (!vdev->reset_ops) {
 		request_module("vfio-reset:%s", vdev->compat);
-		vdev->of_reset = vfio_platform_lookup_reset(vdev->compat,
-							&vdev->reset_module);
+		vdev->reset_ops = vfio_platform_lookup_reset(vdev->compat,
+							     &vdev->reset_module);
 	}
 
-	return vdev->of_reset ? 0 : -ENOENT;
+	return vdev->reset_ops ? 0 : -ENOENT;
 }
 
 static void vfio_platform_put_reset(struct vfio_platform_device *vdev)
@@ -130,7 +130,7 @@ static void vfio_platform_put_reset(struct vfio_platform_device *vdev)
 	if (VFIO_PLATFORM_IS_ACPI(vdev))
 		return;
 
-	if (vdev->of_reset)
+	if (vdev->reset_ops)
 		module_put(vdev->reset_module);
 }
 
@@ -219,9 +219,9 @@ static int vfio_platform_call_reset(struct vfio_platform_device *vdev,
 	if (VFIO_PLATFORM_IS_ACPI(vdev)) {
 		dev_info(vdev->device, "reset\n");
 		return vfio_platform_acpi_call_reset(vdev, extra_dbg);
-	} else if (vdev->of_reset) {
+	} else if (vdev->reset_ops && vdev->reset_ops->reset) {
 		dev_info(vdev->device, "reset\n");
-		return vdev->of_reset(vdev);
+		return vdev->reset_ops->reset(vdev);
 	}
 
 	dev_warn(vdev->device, "no reset function found!\n");
@@ -686,13 +686,15 @@ void __vfio_platform_register_reset(struct vfio_platform_reset_node *node)
 EXPORT_SYMBOL_GPL(__vfio_platform_register_reset);
 
 void vfio_platform_unregister_reset(const char *compat,
-				    vfio_platform_reset_fn_t fn)
+				    struct vfio_platform_reset_ops ops)
 {
 	struct vfio_platform_reset_node *iter, *temp;
 
 	mutex_lock(&driver_lock);
 	list_for_each_entry_safe(iter, temp, &reset_list, link) {
-		if (!strcmp(iter->compat, compat) && (iter->of_reset == fn)) {
+		if (!strcmp(iter->compat, compat) &&
+		    !memcmp(&iter->ops, &ops,
+			    sizeof(struct vfio_platform_reset_ops))) {
 			list_del(&iter->link);
 			break;
 		}
