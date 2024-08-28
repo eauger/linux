@@ -228,6 +228,39 @@ static int vfio_platform_call_reset(struct vfio_platform_device *vdev,
 	return -EINVAL;
 }
 
+static int vfio_platform_reset_module_init(struct vfio_platform_device *vpdev)
+{
+	int ret;
+
+	if (VFIO_PLATFORM_IS_ACPI(vpdev))
+		return 0;
+	if (!vpdev->of_reset_ops || !vpdev->of_reset_ops->init)
+		return 0;
+
+	ret = pm_runtime_get_sync(vpdev->device);
+	if (ret)
+		goto out;
+	ret = vpdev->of_reset_ops->init(vpdev);
+out:
+	pm_runtime_put(vpdev->device);
+	return ret;
+}
+
+static void vfio_platform_reset_module_release(struct vfio_platform_device *vpdev)
+{
+	int ret;
+
+	if (VFIO_PLATFORM_IS_ACPI(vpdev))
+		return;
+	if (!vpdev->of_reset_ops || !vpdev->of_reset_ops->release)
+		return;
+
+	ret = pm_runtime_get_sync(vpdev->device);
+	WARN_ON(ret);
+	vpdev->of_reset_ops->release(vpdev);
+	pm_runtime_put(vpdev->device);
+}
+
 void vfio_platform_close_device(struct vfio_device *core_vdev)
 {
 	struct vfio_platform_device *vdev =
@@ -661,16 +694,24 @@ int vfio_platform_init_common(struct vfio_platform_device *vdev)
 	if (ret && vdev->reset_required) {
 		dev_err(dev, "No reset function found for device %s\n",
 			vdev->name);
-		vfio_platform_regions_cleanup(vdev);
-		return ret;
+		goto out;
 	}
 
+	ret = vfio_platform_reset_module_init(vdev);
+	if (ret)
+		goto out_put_reset;
 	return 0;
+out_put_reset:
+	vfio_platform_put_reset(vdev);
+out:
+	vfio_platform_regions_cleanup(vdev);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(vfio_platform_init_common);
 
 void vfio_platform_release_common(struct vfio_platform_device *vdev)
 {
+	vfio_platform_reset_module_release(vdev);
 	vfio_platform_put_reset(vdev);
 	vfio_platform_regions_cleanup(vdev);
 }
