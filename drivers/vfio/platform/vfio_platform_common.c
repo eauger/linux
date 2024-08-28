@@ -228,6 +228,23 @@ static int vfio_platform_call_reset(struct vfio_platform_device *vdev,
 	return -EINVAL;
 }
 
+static void vfio_platform_reset_module_close(struct vfio_platform_device *vpdev)
+{
+	if (VFIO_PLATFORM_IS_ACPI(vpdev))
+		return;
+	if (vpdev->reset_ops && vpdev->reset_ops->close)
+		vpdev->reset_ops->close(vpdev);
+}
+
+static int vfio_platform_reset_module_open(struct vfio_platform_device *vpdev)
+{
+	if (VFIO_PLATFORM_IS_ACPI(vpdev))
+		return 0;
+	if (vpdev->reset_ops && vpdev->reset_ops->open)
+		return vpdev->reset_ops->open(vpdev);
+	return 0;
+}
+
 void vfio_platform_close_device(struct vfio_device *core_vdev)
 {
 	struct vfio_platform_device *vdev =
@@ -242,6 +259,7 @@ void vfio_platform_close_device(struct vfio_device *core_vdev)
 			"reset driver is required and reset call failed in release (%d) %s\n",
 			ret, extra_dbg ? extra_dbg : "");
 	}
+	vfio_platform_reset_module_close(vdev);
 	pm_runtime_put(vdev->device);
 	vfio_platform_regions_cleanup(vdev);
 	vfio_platform_irq_cleanup(vdev);
@@ -265,7 +283,13 @@ int vfio_platform_open_device(struct vfio_device *core_vdev)
 
 	ret = pm_runtime_get_sync(vdev->device);
 	if (ret < 0)
-		goto err_rst;
+		goto err_rst_open;
+
+	ret = vfio_platform_reset_module_open(vdev);
+	if (ret) {
+		dev_info(vdev->device, "reset module load failed (%d)\n", ret);
+		goto err_rst_open;
+	}
 
 	ret = vfio_platform_call_reset(vdev, &extra_dbg);
 	if (ret && vdev->reset_required) {
@@ -278,6 +302,8 @@ int vfio_platform_open_device(struct vfio_device *core_vdev)
 	return 0;
 
 err_rst:
+	vfio_platform_reset_module_close(vdev);
+err_rst_open:
 	pm_runtime_put(vdev->device);
 	vfio_platform_irq_cleanup(vdev);
 err_irq:
