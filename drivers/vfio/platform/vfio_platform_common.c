@@ -228,6 +228,23 @@ static int vfio_platform_call_reset(struct vfio_platform_device *vdev,
 	return -EINVAL;
 }
 
+static void vfio_platform_reset_module_release(struct vfio_platform_device *vpdev)
+{
+	if (VFIO_PLATFORM_IS_ACPI(vpdev))
+		return;
+	if (vpdev->of_reset_ops && vpdev->of_reset_ops->release)
+		vpdev->of_reset_ops->release(vpdev);
+}
+
+static int vfio_platform_reset_module_init(struct vfio_platform_device *vpdev)
+{
+	if (VFIO_PLATFORM_IS_ACPI(vpdev))
+		return 0;
+	if (vpdev->of_reset_ops && vpdev->of_reset_ops->init)
+		return vpdev->of_reset_ops->init(vpdev);
+	return 0;
+}
+
 void vfio_platform_close_device(struct vfio_device *core_vdev)
 {
 	struct vfio_platform_device *vdev =
@@ -665,12 +682,16 @@ int vfio_platform_init_common(struct vfio_platform_device *vdev)
 		return ret;
 	}
 
-	return 0;
+	ret = vfio_platform_reset_module_init(vdev);
+	if (ret)
+		vfio_platform_put_reset(vdev);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(vfio_platform_init_common);
 
 void vfio_platform_release_common(struct vfio_platform_device *vdev)
 {
+	vfio_platform_reset_module_release(vdev);
 	vfio_platform_put_reset(vdev);
 	vfio_platform_regions_cleanup(vdev);
 }

@@ -74,9 +74,13 @@ struct vfio_platform_device {
  * struct vfio_platform_of_reset_ops - reset ops
  *
  * @reset:	reset function (required)
+ * @init:	Called on device attach (optional)
+ * @release:	Called on device detach (optional)
  */
 struct vfio_platform_of_reset_ops {
 	int (*reset)(struct vfio_platform_device *vdev);
+	int (*init)(struct vfio_platform_device *vdev);
+	void (*release)(struct vfio_platform_device *vdev);
 };
 
 
@@ -129,6 +133,8 @@ __vfio_platform_register_reset(&__ops ## _node)
 MODULE_ALIAS("vfio-reset:" compat);				\
 static int __init reset ## _module_init(void)			\
 {								\
+	if (!!ops.init ^ !!ops.release)				\
+		return -EINVAL;					\
 	vfio_platform_register_reset(compat, ops);		\
 	return 0;						\
 };								\
