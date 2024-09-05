@@ -15,6 +15,7 @@
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/pci.h>
+#include <linux/pci-ats.h>
 #include <linux/virtio.h>
 #include <linux/virtio_config.h>
 #include <linux/virtio_ids.h>
@@ -1035,6 +1036,8 @@ static struct iommu_device *viommu_probe_device(struct device *dev)
 		if (ret)
 			goto err_free_dev;
 	}
+	if dev_is_pci(dev)
+		pci_enable_ats(to_pci_dev(dev), __ffs(viommu->pgsize_bitmap));
 
 	return &viommu->iommu;
 
