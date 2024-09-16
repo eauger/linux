@@ -243,7 +243,6 @@ void vfio_platform_close_device(struct vfio_device *core_vdev)
 			ret, extra_dbg ? extra_dbg : "");
 	}
 	pm_runtime_put(vdev->device);
-	vfio_platform_regions_cleanup(vdev);
 	vfio_platform_irq_cleanup(vdev);
 }
 EXPORT_SYMBOL_GPL(vfio_platform_close_device);
@@ -255,13 +254,9 @@ int vfio_platform_open_device(struct vfio_device *core_vdev)
 	const char *extra_dbg = NULL;
 	int ret;
 
-	ret = vfio_platform_regions_init(vdev);
-	if (ret)
-		return ret;
-
 	ret = vfio_platform_irq_init(vdev);
 	if (ret)
-		goto err_irq;
+		return ret;
 
 	ret = pm_runtime_get_sync(vdev->device);
 	if (ret < 0)
@@ -280,8 +275,6 @@ int vfio_platform_open_device(struct vfio_device *core_vdev)
 err_rst:
 	pm_runtime_put(vdev->device);
 	vfio_platform_irq_cleanup(vdev);
-err_irq:
-	vfio_platform_regions_cleanup(vdev);
 	return ret;
 }
 EXPORT_SYMBOL_GPL(vfio_platform_open_device);
@@ -658,12 +651,17 @@ int vfio_platform_init_common(struct vfio_platform_device *vdev)
 		return ret;
 
 	vdev->device = dev;
+	ret = vfio_platform_regions_init(vdev);
+	if (ret)
+		return ret;
+
 	mutex_init(&vdev->igate);
 
 	ret = vfio_platform_get_reset(vdev);
 	if (ret && vdev->reset_required) {
 		dev_err(dev, "No reset function found for device %s\n",
 			vdev->name);
+		vfio_platform_regions_cleanup(vdev);
 		return ret;
 	}
 
@@ -674,6 +672,7 @@ EXPORT_SYMBOL_GPL(vfio_platform_init_common);
 void vfio_platform_release_common(struct vfio_platform_device *vdev)
 {
 	vfio_platform_put_reset(vdev);
+	vfio_platform_regions_cleanup(vdev);
 }
 EXPORT_SYMBOL_GPL(vfio_platform_release_common);
 
