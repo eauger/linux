@@ -70,21 +70,25 @@ static int vfio_amba_probe(struct amba_device *adev, const struct amba_id *id)
 	struct vfio_platform_device *vdev;
 	int ret;
 
+	pm_runtime_enable(&adev->dev);
 	vdev = vfio_alloc_device(vfio_platform_device, vdev, &adev->dev,
 				 &vfio_amba_ops);
-	if (IS_ERR(vdev))
-		return PTR_ERR(vdev);
+	if (IS_ERR(vdev)) {
+		ret = PTR_ERR(vdev);
+		goto out_pm_disable;
+	}
 
 	ret = vfio_register_group_dev(&vdev->vdev);
 	if (ret)
 		goto out_put_vdev;
 
-	pm_runtime_enable(&adev->dev);
 	dev_set_drvdata(&adev->dev, vdev);
 	return 0;
 
 out_put_vdev:
 	vfio_put_device(&vdev->vdev);
+out_pm_disable:
+	pm_runtime_disable(&adev->dev);
 	return ret;
 }
 
@@ -102,8 +106,8 @@ static void vfio_amba_remove(struct amba_device *adev)
 	struct vfio_platform_device *vdev = dev_get_drvdata(&adev->dev);
 
 	vfio_unregister_group_dev(&vdev->vdev);
-	pm_runtime_disable(vdev->device);
 	vfio_put_device(&vdev->vdev);
+	pm_runtime_disable(&adev->dev);
 }
 
 static const struct vfio_device_ops vfio_amba_ops = {

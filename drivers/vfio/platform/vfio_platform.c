@@ -59,21 +59,26 @@ static int vfio_platform_probe(struct platform_device *pdev)
 	struct vfio_platform_device *vdev;
 	int ret;
 
+	pm_runtime_enable(&pdev->dev);
+
 	vdev = vfio_alloc_device(vfio_platform_device, vdev, &pdev->dev,
 				 &vfio_platform_ops);
-	if (IS_ERR(vdev))
-		return PTR_ERR(vdev);
+	if (IS_ERR(vdev)) {
+		ret = PTR_ERR(vdev);
+		goto out_pm_disable;
+	}
 
 	ret = vfio_register_group_dev(&vdev->vdev);
 	if (ret)
 		goto out_put_vdev;
 
-	pm_runtime_enable(&pdev->dev);
 	dev_set_drvdata(&pdev->dev, vdev);
 	return 0;
 
 out_put_vdev:
 	vfio_put_device(&vdev->vdev);
+out_pm_disable:
+	pm_runtime_disable(&pdev->dev);
 	return ret;
 }
 
@@ -90,8 +95,8 @@ static void vfio_platform_remove(struct platform_device *pdev)
 	struct vfio_platform_device *vdev = dev_get_drvdata(&pdev->dev);
 
 	vfio_unregister_group_dev(&vdev->vdev);
-	pm_runtime_disable(vdev->device);
 	vfio_put_device(&vdev->vdev);
+	pm_runtime_disable(&pdev->dev);
 }
 
 static const struct vfio_device_ops vfio_platform_ops = {
