@@ -101,6 +101,12 @@ static void vm_gic_destroy(struct vm_gic *v)
 	kvm_vm_free(v->vm);
 }
 
+static void vm_dead_gic_destroy(struct vm_gic *v)
+{
+	close(v->gic_fd);
+	kvm_vm_dead_free(v->vm);
+}
+
 struct vgic_region_attr {
 	uint64_t attr;
 	uint64_t size;
@@ -335,7 +341,7 @@ static void test_vgic_then_vcpus(uint32_t gic_dev_type)
 {
 	struct kvm_vcpu *vcpus[NR_VCPUS];
 	struct vm_gic v;
-	int ret, i;
+	int i;
 
 	v = vm_gic_create_with_vcpus(gic_dev_type, 1, vcpus);
 
@@ -345,10 +351,10 @@ static void test_vgic_then_vcpus(uint32_t gic_dev_type)
 	for (i = 1; i < NR_VCPUS; ++i)
 		vcpus[i] = vm_vcpu_add(v.vm, i, guest_code);
 
-	ret = run_vcpu(vcpus[3]);
-	TEST_ASSERT(ret == -EINVAL, "dist/rdist overlap detected on 1st vcpu run");
+	run_vcpu(vcpus[3]);
+	TEST_ASSERT(vm_dead(v.vm), "dist/rdist overlap detected on 1st vcpu run");
 
-	vm_gic_destroy(&v);
+	vm_dead_gic_destroy(&v);
 }
 
 /* All the VCPUs are created before the VGIC KVM device gets initialized */
@@ -356,16 +362,15 @@ static void test_vcpus_then_vgic(uint32_t gic_dev_type)
 {
 	struct kvm_vcpu *vcpus[NR_VCPUS];
 	struct vm_gic v;
-	int ret;
 
 	v = vm_gic_create_with_vcpus(gic_dev_type, NR_VCPUS, vcpus);
 
 	subtest_dist_rdist(&v);
 
-	ret = run_vcpu(vcpus[3]);
-	TEST_ASSERT(ret == -EINVAL, "dist/rdist overlap detected on 1st vcpu run");
+	run_vcpu(vcpus[3]);
+	TEST_ASSERT(vm_dead(v.vm), "dist/rdist overlap detected on 1st vcpu run");
 
-	vm_gic_destroy(&v);
+	vm_dead_gic_destroy(&v);
 }
 
 #define KVM_VGIC_V2_ATTR(offset, cpu) \
@@ -415,9 +420,9 @@ static void test_v3_new_redist_regions(void)
 	kvm_device_attr_set(v.gic_fd, KVM_DEV_ARM_VGIC_GRP_CTRL,
 			    KVM_DEV_ARM_VGIC_CTRL_INIT, NULL);
 
-	ret = run_vcpu(vcpus[3]);
-	TEST_ASSERT(ret == -ENXIO, "running without sufficient number of rdists");
-	vm_gic_destroy(&v);
+	run_vcpu(vcpus[3]);
+	TEST_ASSERT(vm_dead(v.vm), "running without sufficient number of rdists");
+	vm_dead_gic_destroy(&v);
 
 	/* step2 */
 
@@ -428,10 +433,10 @@ static void test_v3_new_redist_regions(void)
 	kvm_device_attr_set(v.gic_fd, KVM_DEV_ARM_VGIC_GRP_ADDR,
 			    KVM_VGIC_V3_ADDR_TYPE_REDIST_REGION, &addr);
 
-	ret = run_vcpu(vcpus[3]);
-	TEST_ASSERT(ret == -EBUSY, "running without vgic explicit init");
+	run_vcpu(vcpus[3]);
+	TEST_ASSERT(vm_dead(v.vm), "running without vgic explicit init");
 
-	vm_gic_destroy(&v);
+	vm_dead_gic_destroy(&v);
 
 	/* step 3 */
 
@@ -604,8 +609,8 @@ static void test_v3_redist_ipa_range_check_at_vcpu_run(void)
 {
 	struct kvm_vcpu *vcpus[NR_VCPUS];
 	struct vm_gic v;
-	int ret, i;
 	uint64_t addr;
+	int i;
 
 	v = vm_gic_create_with_vcpus(KVM_DEV_TYPE_ARM_VGIC_V3, 1, vcpus);
 
@@ -626,11 +631,11 @@ static void test_v3_redist_ipa_range_check_at_vcpu_run(void)
 			    KVM_DEV_ARM_VGIC_CTRL_INIT, NULL);
 
 	/* Attempt to run a vcpu without enough redist space. */
-	ret = run_vcpu(vcpus[2]);
-	TEST_ASSERT(ret && errno == EINVAL,
+	run_vcpu(vcpus[2]);
+	TEST_ASSERT(vm_dead(v.vm),
 		"redist base+size above PA range detected on 1st vcpu run");
 
-	vm_gic_destroy(&v);
+	vm_dead_gic_destroy(&v);
 }
 
 static void test_v3_its_region(void)
