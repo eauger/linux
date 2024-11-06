@@ -712,7 +712,8 @@ void kvm_vm_release(struct kvm_vm *vmp)
 }
 
 static void __vm_mem_region_delete(struct kvm_vm *vm,
-				   struct userspace_mem_region *region)
+				   struct userspace_mem_region *region,
+				   bool dead)
 {
 	int ret;
 
@@ -720,8 +721,10 @@ static void __vm_mem_region_delete(struct kvm_vm *vm,
 	rb_erase(&region->hva_node, &vm->regions.hva_tree);
 	hash_del(&region->slot_node);
 
-	region->region.memory_size = 0;
-	vm_ioctl(vm, KVM_SET_USER_MEMORY_REGION2, &region->region);
+	if (!dead) {
+		region->region.memory_size = 0;
+		vm_ioctl(vm, KVM_SET_USER_MEMORY_REGION2, &region->region);
+	}
 
 	sparsebit_free(&region->unused_phy_pages);
 	sparsebit_free(&region->protected_phy_pages);
@@ -742,7 +745,7 @@ static void __vm_mem_region_delete(struct kvm_vm *vm,
 /*
  * Destroys and frees the VM pointed to by vmp.
  */
-void kvm_vm_free(struct kvm_vm *vmp)
+static void __kvm_vm_free(struct kvm_vm *vmp, bool dead)
 {
 	int ctr;
 	struct hlist_node *node;
@@ -759,7 +762,7 @@ void kvm_vm_free(struct kvm_vm *vmp)
 
 	/* Free userspace_mem_regions. */
 	hash_for_each_safe(vmp->regions.slot_hash, ctr, node, region, slot_node)
-		__vm_mem_region_delete(vmp, region);
+		__vm_mem_region_delete(vmp, region, dead);
 
 	/* Free sparsebit arrays. */
 	sparsebit_free(&vmp->vpages_valid);
@@ -769,6 +772,16 @@ void kvm_vm_free(struct kvm_vm *vmp)
 
 	/* Free the structure describing the VM. */
 	free(vmp);
+}
+
+void kvm_vm_free(struct kvm_vm *vmp)
+{
+	__kvm_vm_free(vmp, false);
+}
+
+void kvm_vm_dead_free(struct kvm_vm *vmp)
+{
+	__kvm_vm_free(vmp, true);
 }
 
 int kvm_memfd_alloc(size_t size, bool hugepages)
@@ -1197,7 +1210,7 @@ void vm_mem_region_move(struct kvm_vm *vm, uint32_t slot, uint64_t new_gpa)
  */
 void vm_mem_region_delete(struct kvm_vm *vm, uint32_t slot)
 {
-	__vm_mem_region_delete(vm, memslot2region(vm, slot));
+	__vm_mem_region_delete(vm, memslot2region(vm, slot), false);
 }
 
 void vm_guest_mem_fallocate(struct kvm_vm *vm, uint64_t base, uint64_t size,
