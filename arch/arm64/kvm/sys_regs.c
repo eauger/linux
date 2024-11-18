@@ -1921,6 +1921,19 @@ static int set_id_aa64pfr1_el1(struct kvm_vcpu *vcpu,
 	return set_id_reg(vcpu, rd, user_val);
 }
 
+static int set_id_aa64mmfr1_el1(struct kvm_vcpu *vcpu,
+				const struct sys_reg_desc *rd,
+				u64 val)
+{
+	/* Only allow VH==0 for NV if NV1 is supported on the host */
+	if (vcpu_has_nv(vcpu) &&
+	    SYS_FIELD_GET(ID_AA64MMFR1_EL1, VH, val) == 0 &&
+	    !cpus_have_final_cap(ARM64_HAS_HCR_NV1))
+		return -EINVAL;
+
+	return set_id_reg(vcpu, rd, val);
+}
+
 static int set_ctr_el0(struct kvm_vcpu *vcpu,
 		       const struct sys_reg_desc *rd, u64 user_val)
 {
@@ -2619,12 +2632,15 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 					ID_AA64MMFR0_EL1_TGRAN4_2 |
 					ID_AA64MMFR0_EL1_TGRAN64_2 |
 					ID_AA64MMFR0_EL1_TGRAN16_2)),
-	ID_WRITABLE(ID_AA64MMFR1_EL1, ~(ID_AA64MMFR1_EL1_RES0 |
-					ID_AA64MMFR1_EL1_HCX |
-					ID_AA64MMFR1_EL1_TWED |
-					ID_AA64MMFR1_EL1_XNX |
-					ID_AA64MMFR1_EL1_VH |
-					ID_AA64MMFR1_EL1_VMIDBits)),
+
+	ID_FILTERED(ID_AA64MMFR1_EL1,
+		    id_aa64mmfr1_el1,
+		    ~(ID_AA64MMFR1_EL1_RES0	|
+		      ID_AA64MMFR1_EL1_HCX	|
+		      ID_AA64MMFR1_EL1_TWED	|
+		      ID_AA64MMFR1_EL1_XNX	|
+		      ID_AA64MMFR1_EL1_VMIDBits)),
+
 	ID_WRITABLE(ID_AA64MMFR2_EL1, ~(ID_AA64MMFR2_EL1_RES0 |
 					ID_AA64MMFR2_EL1_EVT |
 					ID_AA64MMFR2_EL1_FWB |
