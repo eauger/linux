@@ -6252,6 +6252,22 @@ to know what fields can be changed for the system register described by
 ``op0, op1, crn, crm, op2``. KVM rejects ID register values that describe a
 superset of the features supported by the system.
 
+If a series of ID register writes describe a feature set that is unsupported
+due to features being described over multiple registers or because there is
+an implementation choice to not support two features at the same time, KVM
+may not reject the ID register update at the point of writing it, but
+instead:
+
+  * silently fallback to an arbitrary feature set, updating the guest's view
+    of ID registers to reflect the actual feature set at run time
+
+  * or refuse to run the vcpu altogether
+
+Foe example, configuring ID_AA64MMFR1_EL1.VH==0b0001 (indicating FEAT_VHE)
+and ID_AA64MMFR4_EL1.E2H0==0b0000 (indicating FEAT_E2H0 support) could
+implicitly result in the latter being set to 0b1111 or 0b1110, despite both
+fields being advertised as writable and having been successfully written to.
+
 4.140 KVM_SET_USER_MEMORY_REGION2
 ---------------------------------
 
