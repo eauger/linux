@@ -648,6 +648,7 @@ struct kvm_host_data {
 #define KVM_HOST_DATA_FLAG_HOST_SVE_ENABLED		2
 #define KVM_HOST_DATA_FLAG_HOST_SME_ENABLED		3
 #define KVM_HOST_DATA_FLAG_VCPU_IN_HYP_CONTEXT		4
+#define KVM_HOST_DATA_FLAG_L1_VNCR_MAPPED		5
 	unsigned long flags;
 
 	struct kvm_cpu_context host_ctxt;
