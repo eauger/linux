@@ -911,12 +911,31 @@ static void limit_nv_id_regs(struct kvm *kvm)
 
 	/* Force TTL support */
 	val |= FIELD_PREP(NV_FTR(MMFR2, TTL), 0b0001);
+	tmp = kvm_read_vm_id_reg(kvm, SYS_ID_AA64MMFR1_EL1);
 	kvm_set_vm_id_reg(kvm, SYS_ID_AA64MMFR2_EL1, val);
 
-	val = 0;
-	if (!cpus_have_final_cap(ARM64_HAS_HCR_NV1))
-		val |= FIELD_PREP(NV_FTR(MMFR4, E2H0),
-				  ID_AA64MMFR4_EL1_E2H0_NI_NV1);
+	/*
+	 * You get EITHER
+	 *
+	 * - FEAT_VHE without FEAT_E2H0
+	 * - FEAT_NV limited to FEAT_NV2 and HCR_EL2.NV1 RES0
+	 *
+	 * OR
+	 *
+	 * - FEAT_E2H0 without FEAT_VHE or FEAT_NV
+	 *
+	 * Life is too short for anything else.
+	 */
+	val = kvm_read_vm_id_reg(kvm, SYS_ID_AA64MMFR4_EL1);
+	val &= ID_AA64MMFR4_EL1_NV_frac;
+	tmp = kvm_read_vm_id_reg(kvm, SYS_ID_AA64MMFR1_EL1);
+	if (FIELD_GET(NV_FTR(MMFR1, VH), tmp))
+		val |= val ? FIELD_PREP(NV_FTR(MMFR4, E2H0),
+					ID_AA64MMFR4_EL1_E2H0_NI_NV1)
+			   : FIELD_PREP(NV_FTR(MMFR4, E2H0),
+					ID_AA64MMFR4_EL1_E2H0_NI);
+	else
+		val &= ~ID_AA64MMFR4_EL1_NV_frac;
 	kvm_set_vm_id_reg(kvm, SYS_ID_AA64MMFR4_EL1, val);
 
 	/* Only limited support for PMU, Debug, BPs, WPs, and HPMN0 */
@@ -1019,10 +1038,11 @@ int kvm_init_nv_sysregs(struct kvm *kvm)
 		res0 |= HCR_FIEN;
 	if (!kvm_has_feat(kvm, ID_AA64MMFR2_EL1, FWB, IMP))
 		res0 |= HCR_FWB;
-	if (!kvm_has_feat(kvm, ID_AA64MMFR2_EL1, NV, NV2))
-		res0 |= HCR_NV2;
-	if (!kvm_has_feat(kvm, ID_AA64MMFR2_EL1, NV, IMP))
-		res0 |= (HCR_AT | HCR_NV1 | HCR_NV);
+	/* Implementation choice: NV2 is the only supported config */
+	if (!kvm_has_feat(kvm, ID_AA64MMFR4_EL1, NV_frac, NV2_ONLY))
+		res0 |= (HCR_NV2 | HCR_NV | HCR_AT);
+	if (!kvm_has_feat(kvm, ID_AA64MMFR4_EL1, E2H0, NI))
+		res0 |= HCR_NV1;
 	if (!(kvm_vcpu_has_feature(kvm, KVM_ARM_VCPU_PTRAUTH_ADDRESS) &&
 	      kvm_vcpu_has_feature(kvm, KVM_ARM_VCPU_PTRAUTH_GENERIC)))
 		res0 |= (HCR_API | HCR_APK);
@@ -1032,6 +1052,8 @@ int kvm_init_nv_sysregs(struct kvm *kvm)
 		res0 |= (HCR_TEA | HCR_TERR);
 	if (!kvm_has_feat(kvm, ID_AA64MMFR1_EL1, LO, IMP))
 		res0 |= HCR_TLOR;
+	if (!kvm_has_feat(kvm, ID_AA64MMFR1_EL1, VH, IMP))
+		res0 |= HCR_E2H;
 	if (!kvm_has_feat(kvm, ID_AA64MMFR4_EL1, E2H0, IMP))
 		res1 |= HCR_E2H;
 	set_sysreg_masks(kvm, HCR_EL2, res0, res1);
